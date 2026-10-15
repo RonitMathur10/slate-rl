@@ -1,0 +1,19 @@
+.PHONY: install lint fmt test data
+
+install:
+	uv sync
+	uv run pre-commit install
+
+lint:
+	uv run ruff check .
+	uv run ruff format --check .
+
+fmt:
+	uv run ruff check --fix .
+	uv run ruff format .
+
+test:
+	uv run pytest -q
+
+data:
+	uv run python scripts/prepare_data.py

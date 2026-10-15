@@ -1,0 +1,25 @@
+# Secrets
+.env
+.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Data, artifacts, experiment outputs
+data/
+outputs/
+multirun/
+wandb/
+checkpoints/
+artifacts/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
