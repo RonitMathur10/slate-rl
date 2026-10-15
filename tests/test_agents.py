@@ -299,3 +299,91 @@ def test_slateq_trains_and_roundtrips(parts, tmp_path):
     loaded = SlateQAgent.load(tmp_path / "final.pt", "cpu")
     obs = env.reset(seed=1)
     assert torch.equal(loaded.act(obs), agent.act(obs))
+
+
+# ----- PPO ----------------------------------------------------------------------------------
+def test_plackett_luce_log_probs_sum_to_one_over_all_ordered_slates():
+    import itertools
+
+    from slate_rl.agents.ppo import plackett_luce_log_prob
+
+    scores = torch.tensor([[0.3, -1.0, 2.0, 0.5]])
+    slates = torch.tensor(list(itertools.permutations(range(4), 2)))  # all 12 ordered pairs
+    logp = plackett_luce_log_prob(scores.expand(len(slates), -1), slates)
+    assert logp.exp().sum().item() == pytest.approx(1.0, abs=1e-6)
+
+
+def test_gumbel_top_k_matches_plackett_luce_frequencies():
+    from slate_rl.agents.ppo import gumbel_top_k, plackett_luce_log_prob
+
+    scores = torch.tensor([[1.0, 0.0, -1.0]]).expand(20000, -1)
+    slates = gumbel_top_k(scores, 2, torch.Generator().manual_seed(0))
+    target = torch.tensor([[0, 1]])
+    empirical = (slates == target).all(1).float().mean().item()
+    expected = plackett_luce_log_prob(scores[:1], target).exp().item()
+    assert empirical == pytest.approx(expected, abs=0.01)
+
+
+def test_nearest_unused_picks_closest_distinct_candidates():
+    from slate_rl.agents.ppo import nearest_unused
+
+    cand = torch.nn.functional.normalize(
+        torch.tensor([[[1.0, 0.0], [0.0, 1.0], [0.7, 0.7]]]), dim=-1
+    )
+    proto = torch.tensor([[[1.0, 0.1], [1.0, 0.0]]])  # both closest to candidate 0
+    assert nearest_unused(proto, cand).tolist() == [[0, 2]]
+
+
+def test_gae_matches_hand_computation():
+    from slate_rl.agents.ppo import compute_gae
+
+    rewards = torch.tensor([[1.0], [2.0], [3.0]])
+    values = torch.tensor([[0.5], [0.5], [0.5]])
+    dones = torch.tensor([[False], [True], [False]])
+    adv, ret = compute_gae(rewards, values, dones, torch.tensor([1.0]), gamma=0.9, lam=0.8)
+    d2 = 3.0 + 0.9 * 1.0 - 0.5
+    d1 = 2.0 - 0.5  # episode ends after step 1: no bootstrap, no carry
+    d0 = 1.0 + 0.9 * 0.5 - 0.5
+    expected = [d0 + 0.9 * 0.8 * d1, d1, d2]
+    assert adv.squeeze(1).tolist() == pytest.approx(expected)
+    assert torch.allclose(ret, adv + values)
+
+
+@pytest.mark.parametrize("head", ["proto", "plackett_luce"])
+def test_ppo_trains_and_roundtrips(parts, tmp_path, head):
+    from slate_rl.agents.ppo import PPOAgent, PPOConfig, train_ppo
+
+    env = make_env(parts, num_envs=16, seed=0)
+    eval_env = make_env(parts, num_envs=8, autoreset=False)
+    cfg = PPOConfig(
+        head=head, total_steps=16 * 8 * 4, rollout_len=8, minibatches=4, hidden=32, eval_interval=2
+    )
+    agent = PPOAgent.for_env(env, cfg, seed=0)
+    logged = []
+    best = train_ppo(
+        agent,
+        env,
+        cfg,
+        evaluate=lambda a: evaluate_policy(eval_env, a, eval_env.user_pool[:8], seed=0),
+        log=lambda m, step: logged.append(m),
+        checkpoint=tmp_path / "ppo.pt",
+    )
+    losses = [m["train/policy_loss"] for m in logged if "train/policy_loss" in m]
+    assert len(losses) == 4 and all(torch.isfinite(torch.tensor(losses)))
+    assert "return" in best
+    agent.save(tmp_path / "final.pt")
+    loaded = PPOAgent.load(tmp_path / "final.pt", "cpu")
+    obs = env.reset(seed=1)
+    action = loaded.act(obs)
+    assert torch.equal(action, agent.act(obs))
+    for row in action:
+        assert len(set(row.tolist())) == SLATE
+
+
+def test_anchored_proto_policy_starts_as_retrieval_ranking(env):
+    from slate_rl.agents.ppo import PPOAgent, PPOConfig
+
+    agent = PPOAgent.for_env(env, PPOConfig(head="proto", proto_anchor=True, hidden=32))
+    obs = env.reset(seed=0)
+    retrieval_order = torch.arange(SLATE).expand(env.num_envs, -1)  # candidates arrive sorted
+    assert torch.equal(agent.act(obs), retrieval_order)

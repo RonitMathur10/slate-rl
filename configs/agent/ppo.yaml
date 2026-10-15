@@ -1,0 +1,19 @@
+name: ppo
+head: proto            # Wolpertinger-style proto-actions + nearest-neighbour mapping
+num_envs: 256
+total_steps: 1000000
+rollout_len: 32        # 256 x 32 = 8192 transitions per PPO update
+lr: 3.0e-4
+anneal_lr: true
+gamma: 0.95
+gae_lambda: 0.95
+epochs: 4
+minibatches: 8
+clip: 0.2
+vf_coef: 0.5
+ent_coef: 0.0          # Gaussian entropy in 320 dims would dominate; exploration comes from log_std
+max_grad_norm: 0.5
+hidden: 128
+init_log_std: -2.5     # sigma ~0.08, about one coordinate of a unit 64-d vector
+proto_anchor: true     # means = user embedding + residual: starts as retrieval ranking
+eval_interval: 10

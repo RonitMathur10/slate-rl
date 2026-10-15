@@ -14,5 +14,8 @@ mmr_diversity: 1.0
 agents:
   dqn: artifacts/agents/dqn/seed0/model.pt
   slateq: artifacts/agents/slateq/seed0/model.pt
+  ppo: artifacts/agents/ppo/seed0/model.pt
+  ppo_pl: artifacts/agents/ppo_pl/seed0/model.pt
+  ppo_naive: artifacts/agents/ppo_naive/seed0/model.pt
 compare_to: [retrieval, greedy_click, mmr]
 out_dir: reports/eval

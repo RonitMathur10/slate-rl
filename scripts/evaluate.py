@@ -13,13 +13,14 @@ from omegaconf import DictConfig, OmegaConf
 from slate_rl.agents.baselines import make_baselines
 from slate_rl.agents.click_model import load_click_model
 from slate_rl.agents.dqn import DQNAgent
+from slate_rl.agents.ppo import PPOAgent
 from slate_rl.agents.slateq import SlateQAgent
 from slate_rl.envs import EnvConfig, load_assets, make_batched_env
 from slate_rl.eval.evaluate import evaluate_policy
 from slate_rl.eval.stats import paired_difference
 from slate_rl.utils import get_device, seed_everything
 
-LOADERS = {"dqn": DQNAgent.load, "slateq": SlateQAgent.load}
+LOADERS = {"dqn": DQNAgent.load, "slateq": SlateQAgent.load, "ppo": PPOAgent.load}
 COLUMNS = [
     "return",
     "session_length",

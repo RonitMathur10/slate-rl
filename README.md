@@ -12,7 +12,7 @@ The user simulator is learned from **MovieLens-1M**:
 Agents include greedy-click, item-wise DQN, SlateQ and PPO with Wolpertinger-style
 proto-actions.
 
-> Status: work in progress. Milestones 1–6 (data pipeline, retrieval, simulator, environment, baselines, DQN, SlateQ) are done.
+> Status: work in progress. Milestones 1–7 (data pipeline, retrieval, simulator, environment, baselines, DQN, SlateQ, PPO) are done.
 
 ## Setup
 
@@ -28,6 +28,7 @@ make check-env # Gymnasium API check, an example episode, env throughput
 make click-model  # log exploratory slates, fit the agent-side click model
 make dqn       # train DQN (W&B curves; checkpoint selected on training-group users)
 make slateq    # train SlateQ (needs the click model)
+make ppo       # train PPO with proto-actions (also: agent=ppo_pl, agent=ppo_naive)
 make evaluate  # baselines + agents on held-out users, with paired bootstrap CIs
 make test
 ```
@@ -156,6 +157,19 @@ All policies see only the environment's observation.
   - `R_slate` covers the slate-level reward terms (diversity, repeat). The agent computes them
     exactly from its observation; a test checks they match the env's reward.
   - Slates are built greedily, maximising Q(s, A) position by position.
+- **PPO**, in three variants that share one PPO loop (clipped objective, GAE, LR annealing,
+  value bootstrapping at truncation):
+  - `ppo`, Wolpertinger-style proto-actions:
+    - The actor outputs 5 points in the retrieval embedding space, sampled from a diagonal
+      Gaussian. Each is mapped to its nearest unused candidate, so the policy never scores
+      individual items.
+    - The means are anchored at the user's retrieval embedding plus a residual that starts at
+      zero, so the untrained policy *is* retrieval ranking.
+    - Wolpertinger's re-scoring of the m nearest neighbours needs a Q(s, a) critic, so it is
+      not used with PPO.
+  - `ppo_naive`: the same, but with randomly initialised means and larger exploration noise.
+  - `ppo_pl`, the control: a Plackett-Luce policy that scores each candidate and samples a
+    ranked slate with exact log-probabilities (Gumbel top-k).
 - **Training budget:** 1M environment steps per agent, about 10 minutes on an M3. The
   checkpoint is chosen on 1,024 *training-group* users; the 604 held-out users are used only
   for the numbers below.
@@ -171,6 +185,9 @@ Held-out users, one session each, with the same users and seed for every policy:
 | mmr | 8.23 | 10.9 | 5.26 | 3.65 | **0.483** | 0.622 | 0.75 |
 | dqn (1 seed) | 8.88 | 11.8 | 5.08 | 3.70 | 0.431 | 0.636 | **0.39** |
 | **slateq** (1 seed) | **10.01** | **12.8** | **5.88** | **4.40** | 0.461 | **0.712** | 0.58 |
+| ppo, proto-actions (1 seed) | 8.39 | 11.1 | 5.37 | 3.72 | 0.481 | 0.592 | 0.73 |
+| ppo_pl, Plackett-Luce (1 seed) | 9.10 | 11.4 | 5.46 | 3.88 | 0.478 | 0.629 | 0.54 |
+| ppo_naive (1 seed) | 3.74 | 10.7 | 2.58 | 1.86 | 0.240 | 0.739 | 0.76 |
 
 Paired differences in return (95% bootstrap CI over held-out users):
 
@@ -178,6 +195,10 @@ Paired differences in return (95% bootstrap CI over held-out users):
 |---|---|---|---|---|
 | dqn | +0.90 [+0.40, +1.40] | +0.96 [+0.48, +1.46] | +0.65 [+0.17, +1.14] | – |
 | slateq | +2.03 [+1.46, +2.62] | +2.09 [+1.51, +2.70] | +1.78 [+1.24, +2.35] | +1.13 [+0.56, +1.72] |
+| ppo_pl | +1.12 [+0.62, +1.65] | +1.19 [+0.67, +1.75] | +0.87 [+0.37, +1.40] | +0.22 [−0.35, +0.82] |
+| ppo | +0.41 [+0.02, +0.82] | +0.48 [+0.07, +0.92] | +0.17 [−0.24, +0.58] | −0.48 [−1.02, +0.05] |
+
+`ppo_pl` vs `ppo`: +0.71 [+0.20, +1.23]. `slateq` vs `ppo_pl`: +0.91 [+0.38, +1.45].
 
 What the results show:
 - **Both RL agents give up immediate CTR for longer sessions and more watch time**, which is
@@ -188,6 +209,19 @@ What the results show:
   final return within about 100k steps.
 - **Its validation return peaked around 400k steps and then drifted down a little**, so
   checkpoint selection matters.
+- **How PPO's action space is parameterised decides whether it works:**
+  - **Naive proto-actions fail.** Randomly initialised means plus exploration noise about 3×
+    the size of a coordinate of the 64-d unit embeddings send the nearest-neighbour map to
+    near-random slates. The policy gradient then carries almost no signal, and the agent
+    ends *below random* (3.74).
+  - **Anchoring rescues it, but it barely moves.** With means anchored at the user embedding,
+    it starts as retrieval ranking and stays close to it (8.4–8.7 throughout training). It
+    keeps retrieval's CTR and repeat rate.
+  - **Plackett-Luce works best of the three.** Scoring the 100 candidates directly (`ppo_pl`)
+    learns steadily and beats both proto variants. It ties DQN and trails SlateQ, the only
+    agent that models the user's choice explicitly.
+  - Proto-actions are designed for catalogues too large to score item by item. With K=100
+    candidates their scalability is not needed, so they pay only the cost.
 - **The agents need to see their own impressions.** An earlier version of the observation
   hid which candidates had already been shown. With that version DQN never learned to stop
   repeating slates (repeat share 0.74) and only tied MMR. Exposing the impressions dropped

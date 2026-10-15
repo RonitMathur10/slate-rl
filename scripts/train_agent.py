@@ -10,6 +10,7 @@ from omegaconf import DictConfig, OmegaConf
 from slate_rl.agents.click_model import load_click_model
 from slate_rl.agents.dqn import DQNAgent, DQNConfig
 from slate_rl.agents.offpolicy import train_off_policy
+from slate_rl.agents.ppo import PPOAgent, PPOConfig, train_ppo
 from slate_rl.agents.slateq import SlateQAgent, SlateQConfig
 from slate_rl.envs import EnvConfig, load_assets, make_batched_env
 from slate_rl.eval.evaluate import evaluate_policy
@@ -25,10 +26,17 @@ def build_slateq(env, agent_cfg, cfg, device):
     return SlateQAgent.for_env(env, agent_cfg, click_model, seed=cfg.seed)
 
 
+def build_ppo(env, agent_cfg, cfg, device):
+    return PPOAgent.for_env(env, agent_cfg, seed=cfg.seed)
+
+
 # name -> (config dataclass, builder, training loop)
 AGENTS = {
     "dqn": (DQNConfig, build_dqn, train_off_policy),
     "slateq": (SlateQConfig, build_slateq, train_off_policy),
+    "ppo": (PPOConfig, build_ppo, train_ppo),
+    "ppo_pl": (PPOConfig, build_ppo, train_ppo),
+    "ppo_naive": (PPOConfig, build_ppo, train_ppo),
 }
 
 
