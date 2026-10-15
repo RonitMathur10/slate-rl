@@ -34,7 +34,9 @@ class ItemFeatures:
         return cls(genres, year_bucket, popularity)
 
     def to(self, device) -> "ItemFeatures":
-        return ItemFeatures(*(t.to(device) for t in (self.genres, self.year_bucket, self.popularity)))
+        return ItemFeatures(
+            *(t.to(device) for t in (self.genres, self.year_bucket, self.popularity))
+        )
 
 
 @dataclass

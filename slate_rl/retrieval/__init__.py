@@ -1,3 +1,4 @@
+from slate_rl.retrieval.candidates import CandidateGenerator
 from slate_rl.retrieval.model import TwoTower
 from slate_rl.retrieval.retriever import Retriever, pad_history
 from slate_rl.retrieval.train import (
@@ -10,6 +11,7 @@ from slate_rl.retrieval.train import (
 )
 
 __all__ = [
+    "CandidateGenerator",
     "Retriever",
     "TrainConfig",
     "TwoTower",

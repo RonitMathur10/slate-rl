@@ -1,0 +1,10 @@
+defaults:
+  - data: ml1m
+  - simulator: default
+  - wandb: default
+  - _self_
+
+# A different seed from retrieval, so the simulator and the agent's models share no init.
+seed: 1
+device: auto
+log_artifact: true

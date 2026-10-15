@@ -12,7 +12,7 @@ The user simulator is learned from **MovieLens-1M**:
 Agents include greedy-click, item-wise DQN, SlateQ and PPO with Wolpertinger-style
 proto-actions.
 
-> Status: work in progress. Milestones 1–2 (data pipeline, two-tower retrieval) are done.
+> Status: work in progress. Milestones 1–3 (data pipeline, two-tower retrieval, user simulator) are done.
 
 ## Setup
 
@@ -22,6 +22,8 @@ Requires [uv](https://docs.astral.sh/uv/) and a W&B login (`uvx wandb login`).
 make install   # uv sync + pre-commit hooks
 make data      # download MovieLens-1M, index, split -> data/processed/ml-1m
 make retrieval # train the two-tower model + FAISS index -> artifacts/retrieval/ml-1m
+make simulator # train the simulator's choice model -> artifacts/simulator/ml-1m
+make validate  # roll reference policies through the simulator -> reports/simulator/
 make test
 ```
 
@@ -60,11 +62,53 @@ already-seen items excluded:
 Held-out users perform about as well as training users, so the history-based user tower
 generalises to users it never saw.
 
+## User simulator
+
+Each simulated user has two parts:
+- **Learned preferences:** a SASRec-style transformer reads the user's history. It is trained on
+  MovieLens with a full-catalogue softmax (a conditional-logit choice model) plus a rating head.
+- **Hand-set session dynamics:** a choice among the slate's items plus a *no-click* option,
+  position bias, a **fatigue** state, a **satisfaction** state and a probability of leaving.
+  - Fatigue rises when the user consumes items similar to what they just watched.
+  - Satisfaction is a moving average of watch-through.
+  - The leave probability goes up with fatigue and down with satisfaction.
+
+Some design choices:
+- **Comparable utilities:** utilities are expressed as *log-lift over uniform*,
+  `log P(i) + log N`. Because a conditional logit has the IIA property, restricting choice to
+  the slate stays consistent with the model fit on the whole catalogue.
+- **Calibrated fatigue reference:** the similarity level at which fatigue neither rises nor falls
+  is set from real data (the mean similarity between consecutive real consumptions).
+- **Separate models:** the simulator has its own embeddings, separate from the retrieval model the
+  agent uses.
+
+The full report is in [reports/simulator/report.md](reports/simulator/report.md). Results on
+held-out users:
+
+| Policy | Session length | Watch / session | CTR at step 0 |
+|---|---|---|---|
+| Random (from candidates) | 10.4 | 1.88 | 0.27 |
+| Retrieval greedy | 10.8 | 3.52 | 0.61 |
+| Oracle greedy (simulator affinity) | 11.6 | 4.70 | **0.73** |
+| Oracle novelty-aware | **13.6** | **5.73** | 0.72 |
+
+Greedy wins on immediate CTR but loses on session length (−15%) and total watch (−18%) to a
+policy that steers away from what the user just consumed. This is the long-term trade-off
+the RL agents have to discover, and they must do it *without* access to the simulator's
+affinity. The `oracle_*` rows exist only as probes.
+
+**Limitations:**
+- No impressions or watch time: everything except the learned affinity and rating model is
+  hand-set.
+- The rating head is compressed towards the mean (true 1★ → 2.7, 5★ → 3.9).
+- Simulated consumption is slightly more popular and less genre-diverse than real consumption.
+
 ## Layout
 
 ```
 configs/    Hydra configs (data/, wandb/, ...)
-slate_rl/   data/, retrieval/, utils/ (simulator/, envs/, agents/, eval/ coming)
+slate_rl/   data/, retrieval/, simulator/, agents/, eval/, utils/ (envs/ coming)
+reports/    generated validation reports
 scripts/    entry points
 tests/
 ```

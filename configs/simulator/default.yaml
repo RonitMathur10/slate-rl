@@ -1,0 +1,40 @@
+model:
+  max_hist: 50
+  emb_dim: 64
+  n_layers: 2
+  n_heads: 2
+  dropout: 0.2
+train:
+  batch_size: 512
+  epochs: 30
+  lr: 1.0e-3
+  weight_decay: 0.0
+  rating_weight: 0.5
+  patience: 3
+artifact_dir: artifacts/simulator/${data.name}
+
+# Hand-set session dynamics (MovieLens has no impressions, so these cannot be learned).
+# sim_ref is not set here: it is calibrated from real consecutive-item similarity at train time.
+# Tuned with scripts/validate_simulator.py so that random slates get ~25% CTR, oracle greedy
+# ~50%, and a fatigue-unaware greedy policy loses on session length and total watch to a
+# novelty-aware one (see reports/simulator/report.md).
+params:
+  max_steps: 50
+  choice_temp: 1.0
+  no_click_bias: 5.0      # utilities are log-lift over uniform; top-100 candidates sit ~3-5
+  position_decay: 0.1
+  repeat_penalty: 20.0
+  fatigue_weight: 2.5
+  fatigue_decay: 0.85
+  fatigue_lr: 3.0
+  fatigue_max: 5.0
+  sim_window: 5
+  watch_scale: 1.5
+  watch_mid: 3.0
+  watch_fatigue: 0.15
+  watch_noise: 0.1
+  sat_alpha: 0.3
+  sat_init: 0.6
+  leave_bias: -1.5
+  leave_sat: 4.0
+  leave_fatigue: 0.75

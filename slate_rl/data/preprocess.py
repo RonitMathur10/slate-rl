@@ -78,8 +78,10 @@ def preprocess(
     ratings = ratings.filter(pl.col("user_id").is_in(keep.implode()))
 
     groups = assign_user_groups(ratings["user_id"], cfg.heldout_user_frac, cfg.seed)
-    user_index = groups.sort("user_id").with_row_index("user_idx").with_columns(
-        pl.col("user_idx").cast(pl.Int64)
+    user_index = (
+        groups.sort("user_id")
+        .with_row_index("user_idx")
+        .with_columns(pl.col("user_idx").cast(pl.Int64))
     )
     item_index = (
         ratings.select(pl.col("movie_id").unique().sort())

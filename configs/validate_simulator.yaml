@@ -1,0 +1,16 @@
+defaults:
+  - data: ml1m
+  - retrieval: two_tower
+  - simulator: default
+  - wandb: default
+  - _self_
+
+seed: 0
+device: auto
+n_users: 604          # all held-out users
+n_candidates: 100
+slate_size: 5
+mmr_diversity: 2.0
+novelty_weight: 4.0
+real_horizon: 20      # compare the first N real vs simulated consumptions
+out_dir: reports/simulator

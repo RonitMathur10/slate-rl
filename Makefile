@@ -1,4 +1,4 @@
-.PHONY: install lint fmt test data retrieval
+.PHONY: install lint fmt test data retrieval simulator validate
 
 install:
 	uv sync
@@ -20,3 +20,9 @@ data:
 
 retrieval:
 	uv run python scripts/train_retrieval.py
+
+simulator:
+	uv run python scripts/train_simulator.py
+
+validate:
+	uv run python scripts/validate_simulator.py

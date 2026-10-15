@@ -1,0 +1,118 @@
+{
+  "checks": {
+    "choice model beats popularity NLL": true,
+    "rating model beats global-mean RMSE": true,
+    "greedy wins on immediate CTR (step 0)": true,
+    "novelty-aware policy has longer sessions": true,
+    "novelty-aware policy has more total watch": true,
+    "every informed policy clicks more than random": true
+  },
+  "policies": {
+    "random": {
+      "session_length": 10.428808212280273,
+      "clicks_per_session": 2.6490066051483154,
+      "watch_per_session": 1.8809704780578613,
+      "ctr": 0.25400856137275696,
+      "ctr_first5": 0.2549668848514557,
+      "ctr_after10": 0.25730690360069275,
+      "watch_per_click": 0.7100663781166077,
+      "ild": 0.6898558139801025,
+      "fatigue": 0.20542393624782562,
+      "genre_entropy": 1.5923808813095093,
+      "novelty": 10.546369552612305,
+      "coverage": 0.244738262277388,
+      "ctr_step0": 0.2682119309902191
+    },
+    "popularity": {
+      "session_length": 10.79966926574707,
+      "clicks_per_session": 2.8327815532684326,
+      "watch_per_session": 2.2051210403442383,
+      "ctr": 0.26230260729789734,
+      "ctr_first5": 0.2746114134788513,
+      "ctr_after10": 0.25631430745124817,
+      "watch_per_click": 0.7784296870231628,
+      "ild": 0.7306422591209412,
+      "fatigue": 0.16089172661304474,
+      "genre_entropy": 2.17081356048584,
+      "novelty": 8.87829875946045,
+      "coverage": 0.05666486778197517,
+      "ctr_step0": 0.2947019934654236
+    },
+    "retrieval_greedy": {
+      "session_length": 10.779801368713379,
+      "clicks_per_session": 5.142384052276611,
+      "watch_per_session": 3.5153496265411377,
+      "ctr": 0.4770388603210449,
+      "ctr_first5": 0.5306270122528076,
+      "ctr_after10": 0.42935052514076233,
+      "watch_per_click": 0.6836031079292297,
+      "ild": 0.5850927233695984,
+      "fatigue": 0.6662079095840454,
+      "genre_entropy": 1.8154327869415283,
+      "novelty": 10.13387680053711,
+      "coverage": 0.23961144090663788,
+      "ctr_step0": 0.6059602499008179
+    },
+    "oracle_greedy": {
+      "session_length": 11.602648735046387,
+      "clicks_per_session": 6.852649211883545,
+      "watch_per_session": 4.697810649871826,
+      "ctr": 0.5906107425689697,
+      "ctr_first5": 0.667266845703125,
+      "ctr_after10": 0.5345485210418701,
+      "watch_per_click": 0.6855466961860657,
+      "ild": 0.5824447870254517,
+      "fatigue": 0.8198594450950623,
+      "genre_entropy": 1.9102675914764404,
+      "novelty": 10.283182144165039,
+      "coverage": 0.29951430113329736,
+      "ctr_step0": 0.7334437370300293
+    },
+    "oracle_mmr": {
+      "session_length": 12.233443260192871,
+      "clicks_per_session": 7.236754894256592,
+      "watch_per_session": 4.974637031555176,
+      "ctr": 0.5915549993515015,
+      "ctr_first5": 0.6613946557044983,
+      "ctr_after10": 0.5424041152000427,
+      "watch_per_click": 0.6874125599861145,
+      "ild": 0.6398565769195557,
+      "fatigue": 0.7563747763633728,
+      "genre_entropy": 1.9965375661849976,
+      "novelty": 10.265353202819824,
+      "coverage": 0.3051807879114949,
+      "ctr_step0": 0.7301324605941772
+    },
+    "oracle_novel": {
+      "session_length": 13.554636001586914,
+      "clicks_per_session": 8.258277893066406,
+      "watch_per_session": 5.7342329025268555,
+      "ctr": 0.6092585921287537,
+      "ctr_first5": 0.6719141602516174,
+      "ctr_after10": 0.5741287469863892,
+      "watch_per_click": 0.6943618059158325,
+      "ild": 0.629133403301239,
+      "fatigue": 0.6450199484825134,
+      "genre_entropy": 2.1474697589874268,
+      "novelty": 10.200430870056152,
+      "coverage": 0.3089584457636266,
+      "ctr_step0": 0.7218543291091919
+    }
+  },
+  "realism": {
+    "users_compared": 486,
+    "genre_js_divergence": 0.003718084190040827,
+    "real_genre_entropy": 1.9453458786010742,
+    "sim_genre_entropy": 1.697482943534851,
+    "real_novelty": 10.693270683288574,
+    "sim_novelty": 10.142460823059082,
+    "sim_items_per_user": 5.079470157623291
+  },
+  "calibration": {
+    "1": 2.7399511337280273,
+    "2": 2.9591774940490723,
+    "3": 3.295888662338257,
+    "4": 3.606123685836792,
+    "5": 3.9022138118743896
+  }
+}

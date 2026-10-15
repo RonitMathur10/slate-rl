@@ -63,7 +63,7 @@ class UserSequences:
         return torch.nonzero(self.heldout).squeeze(1)
 
     def history(self, users: torch.Tensor, ends: torch.Tensor) -> torch.Tensor:
-        """The ``max_hist`` items before position ``ends`` (exclusive), left-padded. [B, max_hist]"""
+        """The ``max_hist`` items before position ``ends`` (exclusive), left-padded."""
         cols = ends[:, None] + torch.arange(self.max_hist, device=self.device)
         return self.items[users[:, None], cols]
 
@@ -79,16 +79,35 @@ class UserSequences:
         out[:, 0] = 0.0
         return out > 0
 
-    def train_pairs(self) -> tuple[torch.Tensor, torch.Tensor]:
-        """(user, position) for every model-user train interaction that has some history."""
-        users = self.model_users()
-        counts = (self.n_train[users] - 1).clamp(min=0)
+    def split_pairs(
+        self, split: str, users: torch.Tensor | None = None
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """(user, position) for every interaction in ``split`` that has some history before it.
+
+        ``users`` defaults to the model-group users.
+        """
+        users = self.model_users() if users is None else users
+        n_train, n_val, n_total = self.n_train[users], self.n_val[users], self.n_total[users]
+        if split == "train":
+            start, stop = torch.zeros_like(n_train), n_train
+        elif split == "val":
+            start, stop = n_train, n_train + n_val
+        elif split == "test":
+            start, stop = n_train + n_val, n_total
+        else:
+            raise ValueError(f"unknown split {split!r}")
+        start = start.clamp(min=1)
+        counts = (stop - start).clamp(min=0)
         user_rep = torch.repeat_interleave(users, counts)
         offsets = torch.cumsum(counts, 0) - counts
-        pos = torch.arange(len(user_rep), device=self.device) - torch.repeat_interleave(
+        within = torch.arange(len(user_rep), device=self.device) - torch.repeat_interleave(
             offsets, counts
         )
-        return user_rep, pos + 1
+        return user_rep, within + torch.repeat_interleave(start, counts)
+
+    def train_pairs(self) -> tuple[torch.Tensor, torch.Tensor]:
+        """(user, position) for every model-user train interaction that has some history."""
+        return self.split_pairs("train")
 
     def item_at(self, users: torch.Tensor, positions: torch.Tensor) -> torch.Tensor:
         return self.items[users, self.max_hist + positions]
