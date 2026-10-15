@@ -11,13 +11,14 @@ __pycache__/
 .ruff_cache/
 .ipynb_checkpoints/
 
-# Data, artifacts, experiment outputs
-data/
-outputs/
-multirun/
-wandb/
-checkpoints/
-artifacts/
+# Data, artifacts, experiment outputs (anchored to the repo root so that
+# package directories like slate_rl/data/ are not ignored)
+/data/
+/outputs/
+/multirun/
+/wandb/
+/checkpoints/
+/artifacts/
 
 # OS / editors
 .DS_Store

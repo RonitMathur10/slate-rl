@@ -1,0 +1,10 @@
+name: ml-1m
+raw_dir: data/raw
+processed_dir: data/processed/ml-1m
+# Per-user chronological split: the last test_frac of each user's ratings is test,
+# the val_frac before that is validation, and the rest is train.
+val_frac: 0.1
+test_frac: 0.1
+# Users reserved entirely for final RL evaluation (never used to fit models).
+heldout_user_frac: 0.1
+min_interactions: 20

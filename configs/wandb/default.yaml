@@ -1,0 +1,5 @@
+entity: ronit-mathur-ucberkeley
+project: slate-rl
+# online | offline | disabled
+mode: online
+tags: []
