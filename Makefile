@@ -1,4 +1,4 @@
-.PHONY: install lint fmt test data retrieval simulator validate check-env
+.PHONY: install lint fmt test data retrieval simulator validate check-env click-model dqn evaluate
 
 install:
 	uv sync
@@ -29,3 +29,12 @@ validate:
 
 check-env:
 	uv run python scripts/check_env.py
+
+click-model:
+	uv run python scripts/train_click_model.py
+
+dqn:
+	uv run python scripts/train_agent.py agent=dqn
+
+evaluate:
+	uv run python scripts/evaluate.py

@@ -1,0 +1,17 @@
+defaults:
+  - data: ml1m
+  - retrieval: two_tower
+  - simulator: default
+  - env: default
+  - wandb: default
+  - _self_
+
+seed: 0
+device: auto
+click_model: artifacts/agents/click_model.pt
+mmr_diversity: 1.0
+# Learned agents to evaluate: {display name: checkpoint path}. Missing files are skipped.
+agents:
+  dqn: artifacts/agents/dqn/seed0/model.pt
+compare_to: [retrieval, greedy_click, mmr]
+out_dir: reports/eval

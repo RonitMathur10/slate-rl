@@ -1,0 +1,15 @@
+defaults:
+  - data: ml1m
+  - retrieval: two_tower
+  - simulator: default
+  - env: default
+  - agent: dqn
+  - wandb: default
+  - _self_
+
+seed: 0
+device: auto
+# Checkpoints are selected on training-group users (fresh sessions, fixed seed). The held-out
+# users are reserved for the final evaluation in scripts/evaluate.py.
+val_users: 1024
+checkpoint: artifacts/agents/${agent.name}/seed${seed}/model.pt

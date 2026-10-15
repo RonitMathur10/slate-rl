@@ -3,26 +3,10 @@ import pytest
 import torch
 from gymnasium.utils.env_checker import check_env
 
-from slate_rl.data.features import ItemFeatures, UserFeatures
-from slate_rl.data.sequences import UserSequences
 from slate_rl.envs import N_SESSION_FEATURES, BatchedSlateEnv, EnvConfig, SlateRecEnv
-from slate_rl.retrieval import CandidateGenerator, TwoTower
-from slate_rl.simulator import SimParams, UserChoiceModel, UserSimulator
+from slate_rl.simulator import SimParams, UserSimulator
 
 HIST, K, SLATE, N = 8, 6, 3, 5
-
-
-@pytest.fixture
-def parts(processed):
-    torch.manual_seed(0)
-    feats = ItemFeatures.from_processed(processed)
-    seqs = UserSequences(processed, HIST)
-    cand_gen = CandidateGenerator(
-        TwoTower.from_features(feats, emb_dim=8, hidden_dim=16),
-        UserFeatures.from_processed(processed).demo,
-    )
-    model = UserChoiceModel(processed.meta["n_items"], max_hist=HIST, emb_dim=16, dropout=0.0)
-    return feats, seqs, cand_gen, model
 
 
 def make_env(parts, num_envs=N, autoreset=True, seed=0, **sim_kwargs):
@@ -171,3 +155,22 @@ def test_gym_wrapper_matches_batched_env(parts):
 def test_gym_wrapper_rejects_autoreset_env(parts):
     with pytest.raises(ValueError):
         SlateRecEnv(make_env(parts, num_envs=1, autoreset=True))
+
+
+def test_cand_feats_layout_static_then_dynamic(parts):
+    from slate_rl.envs import N_DYNAMIC_FEATURES
+
+    env = make_env(parts)
+    obs = env.reset(seed=0)
+    n_static = env.item_static.shape[1]
+    assert torch.equal(obs.cand_feats[..., :n_static], env.item_static[obs.cand_items])
+    assert obs.cand_feats.shape[-1] == n_static + N_DYNAMIC_FEATURES
+
+
+def test_reset_with_fixed_users(parts):
+    env = make_env(parts)
+    users = torch.tensor([0, 1, 2, 3, 4])
+    env.reset(seed=0, users=users)
+    assert torch.equal(env.users, users)
+    with pytest.raises(ValueError):
+        env.reset(users=torch.tensor([0, 1]))

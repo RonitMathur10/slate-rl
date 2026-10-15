@@ -19,6 +19,7 @@ from slate_rl.retrieval.candidates import CandidateGenerator
 from slate_rl.simulator.simulator import UserSimulator, initial_state
 
 N_SESSION_FEATURES = 6
+N_DYNAMIC_FEATURES = 2  # per-candidate features that change every step (last in cand_feats)
 RECENT_WINDOW = 5
 
 
@@ -53,7 +54,7 @@ class SlateObs:
     session: torch.Tensor  # [N, N_SESSION_FEATURES]
     history: torch.Tensor  # [N, L] recent consumed item_idx, left-padded
     cand_items: torch.Tensor  # [N, K] candidate item_idx
-    cand_feats: torch.Tensor  # [N, K, F] per-candidate features
+    cand_feats: torch.Tensor  # [N, K, F] = [item_static[cand_items], dynamic features]
 
     def __getitem__(self, idx) -> "SlateObs":
         return SlateObs(*(getattr(self, f.name)[idx] for f in fields(self)))
@@ -63,10 +64,12 @@ class SlateObs:
 
 
 class BatchedSlateEnv:
-    """Observation features per candidate: retrieval embedding, retrieval score, normalised log
-    popularity, cosine to the user's recent items, genre multi-hot. Session features: progress
-    (t / max_steps), click-rate EMA, last click, last watch, no-click streak (scaled), and the
-    similarity of the last clicked item to the items before it.
+    """Per-candidate features are ``[item_static[item], retrieval score, cosine to recent items]``.
+    ``item_static`` (retrieval embedding, normalised log popularity, genre multi-hot) depends only
+    on the item, so agents can store item ids plus the ``N_DYNAMIC_FEATURES`` trailing columns and
+    rebuild the rest. Session features: progress (t / max_steps), click-rate EMA, last click,
+    last watch, no-click streak (scaled), and the similarity of the last clicked item to the
+    items before it.
     """
 
     def __init__(
@@ -95,7 +98,9 @@ class BatchedSlateEnv:
         self.novelty = nov / nov.max()
         self.item_emb = cand_gen.item_emb.to(self.device)
         self.emb_dim = self.item_emb.shape[1]
-        self.cand_feat_dim = self.emb_dim + 3 + self.genres.shape[1]
+        self.item_static = torch.cat([self.item_emb, self.log_pop[:, None], self.genres], dim=1)
+        self.pop_feature_index = self.emb_dim  # column of log popularity in item_static
+        self.cand_feat_dim = self.item_static.shape[1] + N_DYNAMIC_FEATURES
         self.hist_len = sim.hist_len
         self.gen = torch.Generator(device=self.device).manual_seed(seed)
         self._rows = torch.arange(self.num_envs, device=self.device)
@@ -105,9 +110,9 @@ class BatchedSlateEnv:
         idx = torch.randint(len(self.user_pool), (n,), generator=self.gen, device=self.device)
         return self.user_pool[idx]
 
-    def _reset_rows(self, idx: torch.Tensor | None) -> None:
+    def _reset_rows(self, idx: torch.Tensor | None, users: torch.Tensor | None = None) -> None:
         n = self.num_envs if idx is None else len(idx)
-        users = self._sample_users(n)
+        users = self._sample_users(n) if users is None else users.to(self.device)
         self.sim.reset(*initial_state(self.seqs, users), idx=idx)
         if idx is None:
             z = lambda: torch.zeros(self.num_envs, device=self.device)  # noqa: E731
@@ -134,11 +139,15 @@ class BatchedSlateEnv:
             t[idx] = 0
         self.shown[idx] = False
 
-    def reset(self, seed: int | None = None) -> SlateObs:
+    def reset(self, seed: int | None = None, users: torch.Tensor | None = None) -> SlateObs:
+        """Start new sessions. ``users`` [num_envs] fixes who is simulated (for paired evaluation);
+        otherwise users are sampled from the pool."""
         if seed is not None:
             self.gen.manual_seed(seed)
             self.sim.gen.manual_seed(seed + 1)
-        self._reset_rows(None)
+        if users is not None and len(users) != self.num_envs:
+            raise ValueError(f"expected {self.num_envs} users, got {len(users)}")
+        self._reset_rows(None, users)
         return self._observe()
 
     # ----- observation --------------------------------------------------------------------
@@ -154,14 +163,7 @@ class BatchedSlateEnv:
         recent_sim = torch.einsum("bkd,bd->bk", cand_emb, recent_vec)
         self._cands, self._recent_sim = cands, recent_sim
         cand_feats = torch.cat(
-            [
-                cand_emb,
-                scores.unsqueeze(-1),
-                self.log_pop[cands].unsqueeze(-1),
-                recent_sim.unsqueeze(-1),
-                self.genres[cands],
-            ],
-            dim=-1,
+            [self.item_static[cands], scores.unsqueeze(-1), recent_sim.unsqueeze(-1)], dim=-1
         )
         session = torch.stack(
             [

@@ -1,8 +1,15 @@
 import numpy as np
 import polars as pl
 import pytest
+import torch
 
+from slate_rl.data.features import ItemFeatures, UserFeatures
 from slate_rl.data.preprocess import SplitConfig, preprocess
+from slate_rl.data.sequences import UserSequences
+from slate_rl.retrieval import CandidateGenerator, TwoTower
+from slate_rl.simulator import UserChoiceModel
+
+ENV_HIST = 8  # history length for the small environment fixtures
 
 
 @pytest.fixture
@@ -43,3 +50,17 @@ def raw_tables():
 @pytest.fixture
 def processed(raw_tables):
     return preprocess(*raw_tables, SplitConfig(heldout_user_frac=0.2, min_interactions=20))
+
+
+@pytest.fixture
+def parts(processed):
+    """Small untrained retrieval + simulator models for environment and agent tests."""
+    torch.manual_seed(0)
+    feats = ItemFeatures.from_processed(processed)
+    seqs = UserSequences(processed, ENV_HIST)
+    cand_gen = CandidateGenerator(
+        TwoTower.from_features(feats, emb_dim=8, hidden_dim=16),
+        UserFeatures.from_processed(processed).demo,
+    )
+    model = UserChoiceModel(processed.meta["n_items"], max_hist=ENV_HIST, emb_dim=16, dropout=0.0)
+    return feats, seqs, cand_gen, model

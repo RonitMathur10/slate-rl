@@ -1,0 +1,18 @@
+defaults:
+  - data: ml1m
+  - retrieval: two_tower
+  - simulator: default
+  - env: default
+  - wandb: default
+  - _self_
+
+seed: 0
+device: auto
+num_envs: 1024
+n_iters: 150          # logged slates = num_envs * n_iters
+val_frac: 0.1
+hidden: 128
+epochs: 20
+batch_size: 1024
+lr: 1.0e-3
+artifact_path: artifacts/agents/click_model.pt

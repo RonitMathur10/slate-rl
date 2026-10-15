@@ -12,7 +12,7 @@ The user simulator is learned from **MovieLens-1M**:
 Agents include greedy-click, item-wise DQN, SlateQ and PPO with Wolpertinger-style
 proto-actions.
 
-> Status: work in progress. Milestones 1–4 (data pipeline, two-tower retrieval, user simulator, RL environment) are done.
+> Status: work in progress. Milestones 1–5 (data pipeline, retrieval, simulator, environment, baselines + DQN) are done.
 
 ## Setup
 
@@ -25,6 +25,9 @@ make retrieval # train the two-tower model + FAISS index -> artifacts/retrieval/
 make simulator # train the simulator's choice model -> artifacts/simulator/ml-1m
 make validate  # roll reference policies through the simulator -> reports/simulator/
 make check-env # Gymnasium API check, an example episode, env throughput
+make click-model  # log exploratory slates, fit the agent-side click model
+make dqn       # train DQN (W&B curves; checkpoint selected on training-group users)
+make evaluate  # baselines + agents on held-out users, with paired bootstrap CIs
 make test
 ```
 
@@ -130,6 +133,52 @@ sessions. `SlateRecEnv` is a single-user Gymnasium wrapper; it passes
 - **Episode end:** a user leaving is `terminated`; hitting the 50-step cap is `truncated`.
   `info["final_obs"]` supports bootstrapping on truncation.
 - **Throughput:** about 22k user-steps/s on an M3 (MPS), and about 9k on CPU.
+
+## Agents and results
+
+All policies see only the environment's observation.
+- **Baselines:** `random`, `popularity`, `retrieval` (two-tower order), `greedy_click` and `mmr`.
+  - `greedy_click` ranks by the **agent's own click model**: a conditional logit with no-click
+    and position bias, fit on 150k logged exploratory slates. It is calibrated (predicted CTR
+    0.396 vs observed 0.388).
+  - `mmr` is greedy-click relevance re-ranked for diversity in embedding space.
+- **DQN (item-wise):**
+  - Q(s, A) = mean of per-candidate q(s, i), and the slate is the top-5 by q.
+  - Training uses double DQN, 3-step returns, Polyak targets and correct bootstrapping on
+    truncation.
+  - The replay buffer stores item ids plus the 2 dynamic features (about 1.3 KB per
+    transition, versus about 34 KB for the full features).
+  - It trains on about 1M environment steps in roughly 10 minutes on an M3.
+  - The checkpoint is chosen on 1,024 *training-group* users. The 604 held-out users are used
+    only for the final numbers below.
+
+Held-out users, one session each, with the same users and seed for every policy:
+
+| Policy | Return | Session length | Clicks | Watch | CTR | ILD |
+|---|---|---|---|---|---|---|
+| random | 4.92 | 10.5 | 2.66 | 1.87 | 0.253 | 0.692 |
+| popularity | 4.22 | 11.0 | 2.88 | 2.24 | 0.262 | 0.730 |
+| retrieval | 7.98 | 10.7 | 5.14 | 3.55 | 0.480 | 0.575 |
+| greedy_click | 7.57 | 10.1 | 4.87 | 3.36 | 0.483 | 0.577 |
+| mmr | **8.33** | 10.9 | 5.32 | 3.68 | **0.488** | 0.617 |
+| dqn (1 seed) | 8.32 | **11.8** | 5.25 | **3.79** | 0.443 | **0.656** |
+
+DQN's return relative to each baseline (paired bootstrap, 95% CI): **+0.76 [+0.30, +1.21]**
+vs greedy_click, +0.34 [−0.11, +0.79] vs retrieval, −0.01 [−0.50, +0.47] vs mmr.
+
+What DQN does differently from the click-maximiser:
+- It **accepts a lower CTR (0.44 vs 0.48) in exchange for longer sessions and more watch
+  time**. This is the long-term trade-off the simulator was designed to reward, and it beats
+  greedy-click clearly.
+- It does *not* yet beat MMR.
+- It never learned to stop re-showing slates: about 74% of each slate was already shown,
+  the same as the deterministic baselines.
+
+The validation curve was still rising at 1M steps
+([learning curves](reports/eval/learning_curves.png)). SlateQ, PPO, longer training and
+multiple seeds come next.
+
+![learning curves](reports/eval/learning_curves.png)
 
 ## Layout
 
