@@ -1,0 +1,32 @@
+defaults:
+  - data: ml1m
+  - retrieval: two_tower
+  - simulator: default
+  - env: default
+  - wandb: default
+  - _self_
+
+seed: 0
+device: auto
+click_model: artifacts/agents/click_model.pt
+mmr_diversity: 1.0
+agents: [dqn, slateq, ppo_pl, ppo]
+seeds: [0, 1, 2, 3, 4]
+checkpoint_pattern: artifacts/agents/{agent}/seed{seed}/model.pt
+reference_baseline: greedy_click
+# Robustness: agents are trained on the nominal simulator and evaluated, unchanged, on
+# perturbed ones. Nominal values: fatigue_weight 2.5, fatigue_lr 3.0, no_click_bias 5.0,
+# leave_bias -1.5.
+scenarios:
+  nominal: {}
+  fatigue_x0.5: {fatigue_weight: 1.25, fatigue_lr: 1.5}
+  fatigue_x1.5: {fatigue_weight: 3.75, fatigue_lr: 4.5}
+  easier_clicks: {no_click_bias: 4.0}
+  pickier_users: {no_click_bias: 6.0}
+  patient_users: {leave_bias: -2.0}
+  impatient_users: {leave_bias: -1.0}
+# A choice model retrained with a different seed: same dynamics, different learned preferences.
+alt_simulators:
+  sim_seed2: artifacts/simulator/ml-1m-seed2
+out_dir: reports/eval_seeds
+plot_only: false  # true: rebuild report.md and figures from results.json, no evaluation

@@ -12,7 +12,7 @@ The user simulator is learned from **MovieLens-1M**:
 Agents include greedy-click, item-wise DQN, SlateQ and PPO with Wolpertinger-style
 proto-actions.
 
-> Status: work in progress. Milestones 1–7 (data pipeline, retrieval, simulator, environment, baselines, DQN, SlateQ, PPO) are done.
+> Status: work in progress. Milestones 1–8 are done: data pipeline, retrieval, simulator, environment, baselines, DQN, SlateQ, PPO, and multi-seed + robustness evaluation.
 
 ## Setup
 
@@ -30,6 +30,9 @@ make dqn       # train DQN (W&B curves; checkpoint selected on training-group us
 make slateq    # train SlateQ (needs the click model)
 make ppo       # train PPO with proto-actions (also: agent=ppo_pl, agent=ppo_naive)
 make evaluate  # baselines + agents on held-out users, with paired bootstrap CIs
+make seeds     # GPU recommended: train 5 seeds of every agent, 6 at a time
+make evaluate-seeds  # multi-seed + robustness report -> reports/eval_seeds/
+make trajectories    # export sessions for the viewer -> reports/trajectories/
 make test
 ```
 
@@ -174,63 +177,94 @@ All policies see only the environment's observation.
   checkpoint is chosen on 1,024 *training-group* users; the 604 held-out users are used only
   for the numbers below.
 
-Held-out users, one session each, with the same users and seed for every policy:
+### Results: 5 training seeds, 604 held-out users
 
-| Policy | Return | Session length | Clicks | Watch | CTR | ILD | Repeat |
-|---|---|---|---|---|---|---|---|
-| random | 4.92 | 10.5 | 2.66 | 1.87 | 0.253 | 0.692 | 0.23 |
-| popularity | 4.22 | 11.0 | 2.88 | 2.24 | 0.262 | 0.730 | 0.84 |
-| retrieval | 7.98 | 10.7 | 5.14 | 3.55 | 0.480 | 0.575 | 0.74 |
-| greedy_click | 7.91 | 10.7 | 5.10 | 3.54 | 0.479 | 0.582 | 0.76 |
-| mmr | 8.23 | 10.9 | 5.26 | 3.65 | **0.483** | 0.622 | 0.75 |
-| dqn (1 seed) | 8.88 | 11.8 | 5.08 | 3.70 | 0.431 | 0.636 | **0.39** |
-| **slateq** (1 seed) | **10.01** | **12.8** | **5.88** | **4.40** | 0.461 | **0.712** | 0.58 |
-| ppo, proto-actions (1 seed) | 8.39 | 11.1 | 5.37 | 3.72 | 0.481 | 0.592 | 0.73 |
-| ppo_pl, Plackett-Luce (1 seed) | 9.10 | 11.4 | 5.46 | 3.88 | 0.478 | 0.629 | 0.54 |
-| ppo_naive (1 seed) | 3.74 | 10.7 | 2.58 | 1.86 | 0.240 | 0.739 | 0.76 |
+Every policy is evaluated on the same held-out users with the same evaluation seed. For the
+RL agents, the intervals are 95% t-intervals across 5 training seeds. The baselines are
+deterministic and are evaluated once. The full report is in
+[reports/eval_seeds/report.md](reports/eval_seeds/report.md).
 
-Paired differences in return (95% bootstrap CI over held-out users):
+| Policy | Return | Session length | Watch | CTR | ILD | Repeat |
+|---|---|---|---|---|---|---|
+| **SlateQ** | **10.14** [9.79, 10.50] | **13.13** | **4.41** | 0.447 | **0.726** | 0.526 |
+| PPO (Plackett-Luce) | 9.32 [9.01, 9.63] | 11.74 | 3.97 | 0.478 | 0.629 | 0.544 |
+| DQN | 8.74 [8.41, 9.06] | 11.86 | 3.62 | 0.422 | 0.647 | **0.383** |
+| MMR | 8.51 | 11.20 | 3.78 | 0.486 | 0.619 | 0.750 |
+| greedy-click | 8.45 | 11.09 | 3.75 | **0.491** | 0.585 | 0.753 |
+| retrieval | 8.37 | 11.12 | 3.67 | 0.487 | 0.579 | 0.741 |
+| PPO (proto-actions) | 8.36 [8.22, 8.50] | 11.10 | 3.66 | 0.485 | 0.592 | 0.732 |
+| random | 4.89 | 10.68 | 1.85 | 0.250 | 0.683 | 0.234 |
+| popularity | 4.05 | 10.90 | 2.16 | 0.255 | 0.738 | 0.838 |
 
-| | vs retrieval | vs greedy_click | vs mmr | vs dqn |
+![returns across seeds](reports/eval_seeds/nominal_returns.png)
+
+### Robustness to a changed simulator
+
+Agents are trained on the nominal simulator and then evaluated, unchanged, against:
+- fatigue that is half or 1.5× as strong
+- users who click more easily, or are pickier
+- users who are more patient, or less patient (they leave later or sooner)
+- **a second simulator**: the same dynamics, but preferences learned by a choice model
+  retrained from a different seed
+
+The table shows each agent's return gain over greedy-click (mean and 95% CI over 5 seeds):
+
+| Scenario | SlateQ | PPO (Plackett-Luce) | DQN | PPO (proto) |
 |---|---|---|---|---|
-| dqn | +0.90 [+0.40, +1.40] | +0.96 [+0.48, +1.46] | +0.65 [+0.17, +1.14] | – |
-| slateq | +2.03 [+1.46, +2.62] | +2.09 [+1.51, +2.70] | +1.78 [+1.24, +2.35] | +1.13 [+0.56, +1.72] |
-| ppo_pl | +1.12 [+0.62, +1.65] | +1.19 [+0.67, +1.75] | +0.87 [+0.37, +1.40] | +0.22 [−0.35, +0.82] |
-| ppo | +0.41 [+0.02, +0.82] | +0.48 [+0.07, +0.92] | +0.17 [−0.24, +0.58] | −0.48 [−1.02, +0.05] |
+| nominal | **+1.69** [+1.34, +2.04] | +0.86 [+0.56, +1.17] | +0.28 [−0.04, +0.61] | −0.10 [−0.23, +0.04] |
+| fatigue ×0.5 | +0.81 [+0.17, +1.44] | **+0.88** [+0.41, +1.34] | −0.88 [−1.40, −0.35] | +0.22 [−0.09, +0.52] |
+| fatigue ×1.5 | **+2.02** [+1.88, +2.16] | +1.00 [+0.74, +1.27] | +1.01 [+0.82, +1.20] | +0.15 [+0.05, +0.26] |
+| easier clicks | **+5.64** [+4.90, +6.39] | +1.78 [+1.30, +2.27] | +2.13 [+1.73, +2.53] | +0.17 [−0.12, +0.47] |
+| pickier users | +0.29 [+0.15, +0.43] | **+0.40** [+0.19, +0.61] | +0.01 [−0.13, +0.15] | −0.04 [−0.20, +0.11] |
+| patient users | **+3.09** [+2.54, +3.63] | +1.65 [+1.36, +1.94] | +1.06 [+0.65, +1.47] | +0.40 [+0.34, +0.46] |
+| impatient users | **+1.02** [+0.94, +1.10] | +0.67 [+0.46, +0.87] | +0.30 [+0.12, +0.48] | +0.00 [−0.10, +0.10] |
+| second simulator | **+2.03** [+1.62, +2.44] | +1.30 [+1.10, +1.51] | +0.99 [+0.91, +1.08] | +0.53 [+0.40, +0.65] |
 
-`ppo_pl` vs `ppo`: +0.71 [+0.20, +1.23]. `slateq` vs `ppo_pl`: +0.91 [+0.38, +1.45].
+![robustness](reports/eval_seeds/robustness.png)
 
-What the results show:
-- **Both RL agents give up immediate CTR for longer sessions and more watch time**, which is
-  exactly the long-term trade-off the simulator was designed to reward. Over training, SlateQ
-  lowers its CTR (0.46 → 0.44) while its sessions grow from 11.5 to 13 steps
-  ([learning curves](reports/eval/learning_curves.png)).
-- **SlateQ wins by modelling how slate items compete for a single click.** It reaches DQN's
-  final return within about 100k steps.
-- **Its validation return peaked around 400k steps and then drifted down a little**, so
-  checkpoint selection matters.
-- **How PPO's action space is parameterised decides whether it works:**
-  - **Naive proto-actions fail.** Randomly initialised means plus exploration noise about 3×
-    the size of a coordinate of the 64-d unit embeddings send the nearest-neighbour map to
-    near-random slates. The policy gradient then carries almost no signal, and the agent
-    ends *below random* (3.74).
-  - **Anchoring rescues it, but it barely moves.** With means anchored at the user embedding,
-    it starts as retrieval ranking and stays close to it (8.4–8.7 throughout training). It
-    keeps retrieval's CTR and repeat rate.
-  - **Plackett-Luce works best of the three.** Scoring the 100 candidates directly (`ppo_pl`)
-    learns steadily and beats both proto variants. It ties DQN and trails SlateQ, the only
-    agent that models the user's choice explicitly.
-  - Proto-actions are designed for catalogues too large to score item by item. With K=100
-    candidates their scalability is not needed, so they pay only the cost.
+### What the results show
+
+- **SlateQ is the best policy, and the lead is robust.**
+  - It beats every baseline and every other agent on the nominal simulator, and it beats
+    greedy-click in all 8 scenarios.
+  - It wins by modelling how the items in a slate compete for a single click. It accepts a
+    lower CTR (0.45 vs 0.49) in exchange for sessions that are 18% longer and 18% more watch
+    time, which is the long-term trade-off the simulator was built to reward.
+  - Its advantage *grows* when that trade-off is stronger: easier clicks, patient users, or
+    stronger fatigue.
+- **PPO with a Plackett-Luce policy is a solid second.** It is positive in all 8 scenarios
+  and is the most robust when fatigue is weak or users are picky.
+- **DQN only ties the baselines across seeds** (+0.28 [−0.04, +0.61] vs greedy-click).
+  - A single-seed run in milestone 6 had suggested a significant win. Five seeds show that
+    was partly luck, which is exactly why multi-seed evaluation matters.
+  - DQN also *loses* to greedy-click when fatigue is halved (−0.88). It seems to over-learn
+    "avoid similar items" in a world where that matters less.
+- **How PPO's action space is parameterised decides whether it works.**
+  - *Naive* proto-actions fail outright (3.74, below random). With random initialisation
+    and noise about 3× a coordinate of the 64-d unit embeddings, the nearest-neighbour map
+    produces near-random slates and the gradient carries no signal.
+  - Anchoring the proto-actions at the user embedding makes the policy start as retrieval
+    ranking, but over 5 seeds it never moves away from it (8.36 vs retrieval 8.37).
+  - Scoring the 100 candidates directly (Plackett-Luce) works far better.
+  - Proto-actions are meant for catalogues too large to score item by item; with K=100 they
+    pay only the cost.
 - **The agents need to see their own impressions.** An earlier version of the observation
-  hid which candidates had already been shown. With that version DQN never learned to stop
-  repeating slates (repeat share 0.74) and only tied MMR. Exposing the impressions dropped
-  DQN's repeat share to 0.39 and made it beat every baseline.
+  hid which candidates had already been shown. With it, DQN re-showed about 74% of each
+  slate, like the fixed baselines. With the impression feature, its repeat share is 0.38.
+- **Evaluation noise is real.** The same baselines scored about 0.4 lower in milestones 5–7,
+  which were evaluated on the Mac (MPS) instead of a CUDA GPU. Different random-number
+  streams mean different simulated users' choices. This is why every number above comes
+  from one paired evaluation run.
 
-These are single-seed results. Multi-seed runs and robustness to perturbed simulators come in
-milestone 8.
-
-![learning curves](reports/eval/learning_curves.png)
+**Compute:**
+- Milestones 1–7 ran on an M3 MacBook Air.
+- Milestone 8 (16 more training runs, a second simulator, 8 robustness scenarios) ran on a
+  rented RTX 3090 in about 30 minutes of compute (six runs at a time), within roughly an
+  hour of pod time including setup.
+- The full pipeline can be rerun on a GPU machine with:
+  `bash scripts/remote/setup.sh && bash scripts/remote/milestone8.sh`.
+- Learning curves for seed 0 are in
+  [reports/eval/learning_curves.png](reports/eval/learning_curves.png).
 
 ## Layout
 

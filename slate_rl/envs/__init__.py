@@ -6,7 +6,13 @@ from slate_rl.envs.batched import (
     RewardConfig,
     SlateObs,
 )
-from slate_rl.envs.factory import EnvAssets, load_assets, make_batched_env, make_gym_env
+from slate_rl.envs.factory import (
+    EnvAssets,
+    load_assets,
+    make_batched_env,
+    make_gym_env,
+    with_simulator,
+)
 from slate_rl.envs.gym_env import SlateRecEnv
 
 __all__ = [
@@ -21,4 +27,5 @@ __all__ = [
     "load_assets",
     "make_batched_env",
     "make_gym_env",
+    "with_simulator",
 ]

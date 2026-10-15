@@ -1,4 +1,4 @@
-.PHONY: install lint fmt test data retrieval simulator validate check-env click-model dqn slateq ppo evaluate
+.PHONY: install lint fmt test data retrieval simulator validate check-env click-model dqn slateq ppo evaluate seeds evaluate-seeds trajectories
 
 install:
 	uv sync
@@ -44,3 +44,12 @@ ppo:
 
 evaluate:
 	uv run python scripts/evaluate.py
+
+seeds:
+	uv run python scripts/run_seeds.py --parallel 6
+
+evaluate-seeds:
+	uv run python scripts/evaluate_seeds.py
+
+trajectories:
+	uv run python scripts/export_trajectories.py

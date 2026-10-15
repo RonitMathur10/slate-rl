@@ -387,3 +387,32 @@ def test_anchored_proto_policy_starts_as_retrieval_ranking(env):
     obs = env.reset(seed=0)
     retrieval_order = torch.arange(SLATE).expand(env.num_envs, -1)  # candidates arrive sorted
     assert torch.equal(agent.act(obs), retrieval_order)
+
+
+# ----- milestone 8 evaluation helpers --------------------------------------------------------
+def test_seed_ci():
+    from slate_rl.eval.stats import seed_ci
+
+    mean, lo, hi = seed_ci([1.0, 2.0, 3.0, 4.0, 5.0])
+    assert mean == 3.0
+    assert (hi - mean) == pytest.approx(2.776 * (2.5**0.5) / 5**0.5, rel=1e-3)
+    assert seed_ci([2.0]) == (2.0, 2.0, 2.0)
+
+
+def test_record_trajectories_matches_evaluation(parts):
+    from slate_rl.eval.trajectories import record_trajectories
+
+    env = make_env(parts, num_envs=6, autoreset=False)
+    users = env.user_pool[:6]
+    policy = make_baselines(env, None)["retrieval"]
+    titles = [f"title {i}" for i in range(env.item_static.shape[0])]
+    traj = record_trajectories(env, policy, users, titles, "retrieval", seed=0)
+    result = evaluate_policy(env, policy, users, seed=0)
+    per_user = traj.group_by("user_idx").agg(
+        __import__("polars").col("reward").sum(), __import__("polars").len().alias("n")
+    )
+    assert per_user["reward"].mean() == pytest.approx(result["return"], rel=1e-5)
+    assert per_user["n"].mean() == pytest.approx(result["session_length"])
+    row = traj.row(0, named=True)
+    assert len(row["slate"]) == SLATE and len(row["slate_titles"]) == SLATE
+    assert (row["clicked_title"] is None) == (row["clicked_position"] == -1)

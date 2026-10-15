@@ -1,6 +1,6 @@
 """Build environments from the trained artifacts (processed data, retriever, simulator)."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import torch
 from omegaconf import DictConfig, OmegaConf
@@ -89,3 +89,12 @@ def make_gym_env(
     )
     batched = make_batched_env(assets, single, user_group, seed)
     return SlateRecEnv(batched, titles=assets.titles, render_mode=render_mode)
+
+
+def with_simulator(assets: EnvAssets, artifact_dir: str) -> EnvAssets:
+    """Same assets, but users are simulated by another trained choice model (robustness)."""
+    model, sim_ref = load_choice_model(artifact_dir, assets.seqs.device)
+    if model.max_hist != assets.seqs.max_hist:
+        raise ValueError("alternate simulator must use the same history length")
+    params = SimParams.from_dict({**assets.sim_params.__dict__, "sim_ref": sim_ref})
+    return replace(assets, choice_model=model, sim_params=params)
