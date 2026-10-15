@@ -1,0 +1,19 @@
+name: slateq
+num_envs: 256
+total_iters: 4000      # x num_envs = ~1M environment steps
+buffer_size: 500000
+batch_size: 512
+lr: 3.0e-4
+gamma: 0.95
+n_step: 3
+tau: 0.005
+learning_starts: 20000
+updates_per_iter: 2
+eps_start: 1.0
+eps_end: 0.05
+eps_fraction: 0.3
+hidden: 128
+grad_clip: 10.0
+eval_interval: 250
+log_interval: 50
+click_model: artifacts/agents/click_model.pt  # the agent's own choice model (fixed)

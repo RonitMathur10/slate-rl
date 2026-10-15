@@ -30,14 +30,22 @@ def main() -> None:
     args = parser.parse_args()
 
     api = wandb.Api()
-    runs = api.runs(f"{args.entity}/{args.project}", filters={"jobType": "train"})
-    curves: dict[str, list] = defaultdict(list)
+    runs = api.runs(
+        f"{args.entity}/{args.project}",
+        filters={"jobType": "train", "state": "finished"},
+        order="-created_at",
+    )
+    # Keep only the newest finished run per (agent, seed): reruns supersede older versions.
+    latest: dict[tuple[str, str], object] = {}
     for run in runs:
-        agent = run.name.rsplit("-seed", 1)[0]
-        if agent not in args.agents or run.state != "finished":
-            continue
-        rows = [r for r in run.scan_history(keys=["_step"] + [m for m, _ in METRICS])]
-        curves[agent].append(rows)
+        agent, _, seed = run.name.rpartition("-seed")
+        if agent in args.agents and (agent, seed) not in latest:
+            latest[(agent, seed)] = run
+    curves: dict[str, list] = defaultdict(list)
+    keys = ["_step"] + [m for m, _ in METRICS]
+    for (agent, _), run in sorted(latest.items()):
+        rows = run.history(keys=keys, samples=1000, pandas=False)
+        curves[agent].append(sorted(rows, key=lambda r: r["_step"]))
 
     fig, axes = plt.subplots(1, len(METRICS), figsize=(5 * len(METRICS), 3.6))
     for agent, seeds in curves.items():

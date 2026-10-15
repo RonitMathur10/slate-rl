@@ -207,3 +207,95 @@ def test_bootstrap_ci_and_paired_difference():
     assert diff == pytest.approx(0.5) and lo == pytest.approx(0.5) and hi == pytest.approx(0.5)
     mean, lo, hi = bootstrap_ci(torch.randn(400, generator=gen))
     assert lo < mean < hi and lo < 0 < hi
+
+
+# ----- SlateQ -------------------------------------------------------------------------------
+def make_slateq(env, cfg=None):
+    from slate_rl.agents.slateq import SlateQAgent, SlateQConfig
+
+    return SlateQAgent.for_env(env, cfg or SlateQConfig(hidden=32), make_click_model(env), seed=0)
+
+
+def test_slateq_slate_reward_matches_env_reward_components(env):
+    agent = make_slateq(env)
+    obs = env.reset(seed=0)
+    for _ in range(3):  # later steps include re-shown items
+        action = agent.act(obs)
+        compact = CompactObs.from_obs(obs)
+        predicted = agent.slate.slate_reward(compact, action, agent.item_static)
+        obs, _, _, _, info = env.step(action)
+        c, w = info["reward_components"], env.cfg.reward
+        assert torch.allclose(
+            predicted, w.diversity * c["diversity"] - w.repeat * c["repeat"], atol=1e-5
+        )
+
+
+def test_slateq_greedy_value_is_consistent_with_slate_value(env):
+    from slate_rl.agents.slateq import slate_q_value
+
+    agent = make_slateq(env)
+    compact = CompactObs.from_obs(env.reset(seed=0))
+    slate, best = agent._greedy(agent.net, compact)
+    for row in slate:
+        assert len(set(row.tolist())) == SLATE
+    qbar, q_none = agent.net(compact)
+    scores, none_logit = agent.click_model.scores(compact)
+    direct = slate_q_value(
+        slate, qbar, q_none, scores, none_logit, agent.click_model.position_bias
+    ) + agent.slate.slate_reward(compact, slate, agent.item_static)
+    assert torch.allclose(best, direct, atol=1e-4)
+
+
+def test_slateq_greedy_prefers_high_value_items():
+    from slate_rl.agents.slateq import greedy_slate
+    from slate_rl.envs import RewardConfig
+
+    qbar = torch.tensor([[0.0, 5.0, 1.0, 4.0, 0.5]])
+    scores = torch.zeros(1, 5)
+    slate, _ = greedy_slate(
+        qbar,
+        torch.zeros(1),
+        scores,
+        torch.zeros(1),
+        torch.zeros(2),
+        dist=torch.zeros(1, 5, 5),
+        shown=torch.zeros(1, 5),
+        reward=RewardConfig(diversity=0.0, repeat=0.0),
+        k=2,
+    )
+    assert slate.tolist() == [[1, 3]]
+
+
+def test_slateq_trains_and_roundtrips(parts, tmp_path):
+    from slate_rl.agents.slateq import SlateQAgent, SlateQConfig, train_slateq
+
+    env = make_env(parts, num_envs=16, seed=0)
+    eval_env = make_env(parts, num_envs=8, autoreset=False)
+    cfg = SlateQConfig(
+        total_iters=40,
+        buffer_size=2000,
+        batch_size=32,
+        learning_starts=64,
+        updates_per_iter=1,
+        hidden=32,
+        eval_interval=20,
+        log_interval=10,
+    )
+    agent = make_slateq(env, cfg)
+    logged = []
+    train_slateq(
+        agent,
+        env,
+        cfg,
+        evaluate=lambda a: evaluate_policy(eval_env, a, eval_env.user_pool[:8], seed=0),
+        log=lambda m, step: logged.append(m),
+        checkpoint=tmp_path / "slateq.pt",
+    )
+    losses = [m["train/loss"] for m in logged if "train/loss" in m]
+    assert losses and all(torch.isfinite(torch.tensor(losses)))
+    assert (tmp_path / "slateq.pt").exists()
+    agent.epsilon = 0.0
+    agent.save(tmp_path / "final.pt")
+    loaded = SlateQAgent.load(tmp_path / "final.pt", "cpu")
+    obs = env.reset(seed=1)
+    assert torch.equal(loaded.act(obs), agent.act(obs))

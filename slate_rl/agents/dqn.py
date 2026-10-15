@@ -7,8 +7,6 @@ ignores how slate items compete for the user's single click; SlateQ (next agent)
 """
 
 import copy
-import time
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -17,7 +15,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from slate_rl.agents.common import CandidateEncoder, CompactObs, encoder_kwargs
-from slate_rl.agents.replay import NStepAccumulator, ReplayBuffer
+from slate_rl.agents.offpolicy import train_off_policy
 from slate_rl.envs.batched import SlateObs
 
 
@@ -82,6 +80,14 @@ class DQNAgent:
         explore = torch.rand(n, generator=self.gen, device=q.device) < self.epsilon
         return torch.where(explore[:, None], noise.topk(self.k, dim=1).indices, greedy)
 
+    stored_action_dim_offset = 0  # replay stores just the slate
+
+    def stored_action(self, action: torch.Tensor, info: dict) -> torch.Tensor:
+        return action
+
+    def set_train(self, train: bool) -> None:
+        self.q.train(train)
+
     def update(self, batch) -> dict[str, float]:
         obs, action, reward, discount, next_obs = batch
         with torch.no_grad():
@@ -126,77 +132,5 @@ class DQNAgent:
         return cls(q, ckpt["k"], DQNConfig(**ckpt["cfg"]), device)
 
 
-def train_dqn(
-    agent: DQNAgent,
-    env,
-    cfg: DQNConfig,
-    evaluate: Callable[[DQNAgent], dict] | None = None,
-    log: Callable[[dict, int], None] = lambda m, step: None,
-    checkpoint: str | Path | None = None,
-) -> dict:
-    """Train on the auto-resetting ``env``; evaluate (greedy) every ``eval_interval`` iterations
-    and keep the checkpoint with the best evaluation return."""
-    obs = env.reset()
-    compact = CompactObs.from_obs(obs)
-    buffer = ReplayBuffer(cfg.buffer_size, compact, env.k, env.device)
-    nstep = NStepAccumulator(cfg.n_step, cfg.gamma)
-    decay_iters = max(1, int(cfg.eps_fraction * cfg.total_iters))
-    best, best_metrics = -float("inf"), {}
-    recent_returns: list[torch.Tensor] = []
-    start = time.perf_counter()
-    for it in range(1, cfg.total_iters + 1):
-        frac = min(1.0, it / decay_iters)
-        agent.epsilon = cfg.eps_start + frac * (cfg.eps_end - cfg.eps_start)
-        action = agent.act(obs)
-        next_obs, reward, terminated, truncated, info = env.step(action)
-        next_compact = CompactObs.from_obs(next_obs)
-        if "final_obs" in info:  # true next state for truncated rows (before auto-reset)
-            next_compact = CompactObs.where(
-                truncated, CompactObs.from_obs(info["final_obs"]), next_compact
-            )
-        out = nstep.push(compact, action, reward, terminated, terminated | truncated, next_compact)
-        if out is not None:
-            buffer.add(*out)
-        obs, compact = next_obs, CompactObs.from_obs(next_obs)
-        if "episode" in info:
-            recent_returns.append(info["episode"]["return"])
-
-        metrics: dict[str, float] = {}
-        if buffer.size >= cfg.learning_starts:
-            agent.q.train()
-            for _ in range(cfg.updates_per_iter):
-                metrics = agent.update(buffer.sample(cfg.batch_size, agent.gen))
-
-        if it % cfg.log_interval == 0:
-            env_steps = it * env.num_envs
-            row = {f"train/{k}": v for k, v in metrics.items()}
-            row |= {
-                "train/epsilon": agent.epsilon,
-                "train/buffer": buffer.size,
-                "train/sps": env_steps / (time.perf_counter() - start),
-            }
-            if recent_returns:
-                row["train/episode_return"] = torch.cat(recent_returns).mean().item()
-                recent_returns = []
-            log(row, env_steps)
-
-        if evaluate is not None and (it % cfg.eval_interval == 0 or it == cfg.total_iters):
-            eps, agent.epsilon = agent.epsilon, 0.0
-            agent.q.eval()
-            result = evaluate(agent)
-            agent.epsilon = eps
-            log(
-                {f"eval/{k}": v for k, v in result.items() if isinstance(v, float)},
-                it * env.num_envs,
-            )
-            if result["return"] > best:
-                best, best_metrics = result["return"], result
-                if checkpoint is not None:
-                    agent.save(
-                        checkpoint,
-                        {
-                            "eval": {k: v for k, v in result.items() if isinstance(v, float)},
-                            "iter": it,
-                        },
-                    )
-    return best_metrics
+# The training loop is shared with SlateQ.
+train_dqn = train_off_policy

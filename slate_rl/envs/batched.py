@@ -19,7 +19,7 @@ from slate_rl.retrieval.candidates import CandidateGenerator
 from slate_rl.simulator.simulator import UserSimulator, initial_state
 
 N_SESSION_FEATURES = 6
-N_DYNAMIC_FEATURES = 2  # per-candidate features that change every step (last in cand_feats)
+N_DYNAMIC_FEATURES = 3  # per-candidate features that change every step (last in cand_feats)
 RECENT_WINDOW = 5
 
 
@@ -64,7 +64,8 @@ class SlateObs:
 
 
 class BatchedSlateEnv:
-    """Per-candidate features are ``[item_static[item], retrieval score, cosine to recent items]``.
+    """Per-candidate features are ``[item_static[item], retrieval score, cosine to recent items,
+    already shown this session]``.
     ``item_static`` (retrieval embedding, normalised log popularity, genre multi-hot) depends only
     on the item, so agents can store item ids plus the ``N_DYNAMIC_FEATURES`` trailing columns and
     rebuild the rest. Session features: progress (t / max_steps), click-rate EMA, last click,
@@ -162,8 +163,15 @@ class BatchedSlateEnv:
         cand_emb = self.item_emb[cands]
         recent_sim = torch.einsum("bkd,bd->bk", cand_emb, recent_vec)
         self._cands, self._recent_sim = cands, recent_sim
+        shown = self.shown.gather(1, cands).float()  # the recommender's own impression log
         cand_feats = torch.cat(
-            [self.item_static[cands], scores.unsqueeze(-1), recent_sim.unsqueeze(-1)], dim=-1
+            [
+                self.item_static[cands],
+                scores.unsqueeze(-1),
+                recent_sim.unsqueeze(-1),
+                shown.unsqueeze(-1),
+            ],
+            dim=-1,
         )
         session = torch.stack(
             [

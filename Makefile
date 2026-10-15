@@ -1,4 +1,4 @@
-.PHONY: install lint fmt test data retrieval simulator validate check-env click-model dqn evaluate
+.PHONY: install lint fmt test data retrieval simulator validate check-env click-model dqn slateq evaluate
 
 install:
 	uv sync
@@ -35,6 +35,9 @@ click-model:
 
 dqn:
 	uv run python scripts/train_agent.py agent=dqn
+
+slateq:
+	uv run python scripts/train_agent.py agent=slateq
 
 evaluate:
 	uv run python scripts/evaluate.py

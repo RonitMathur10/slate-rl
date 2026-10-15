@@ -13,12 +13,13 @@ from omegaconf import DictConfig, OmegaConf
 from slate_rl.agents.baselines import make_baselines
 from slate_rl.agents.click_model import load_click_model
 from slate_rl.agents.dqn import DQNAgent
+from slate_rl.agents.slateq import SlateQAgent
 from slate_rl.envs import EnvConfig, load_assets, make_batched_env
 from slate_rl.eval.evaluate import evaluate_policy
 from slate_rl.eval.stats import paired_difference
 from slate_rl.utils import get_device, seed_everything
 
-LOADERS = {"dqn": DQNAgent.load}
+LOADERS = {"dqn": DQNAgent.load, "slateq": SlateQAgent.load}
 COLUMNS = [
     "return",
     "session_length",
@@ -91,6 +92,13 @@ def main(cfg: DictConfig) -> None:
                 )
                 comparisons[f"{name}-vs-{base}"] = diff
                 print(f"  {name} - {base:<13} {diff[0]:+.3f} [{diff[1]:+.3f}, {diff[2]:+.3f}]")
+        for i, name in enumerate(learned):  # learned agents against each other
+            for other in learned[:i]:
+                diff = paired_difference(
+                    results[name]["per_user_return"], results[other]["per_user_return"]
+                )
+                comparisons[f"{name}-vs-{other}"] = diff
+                print(f"  {name} - {other:<13} {diff[0]:+.3f} [{diff[1]:+.3f}, {diff[2]:+.3f}]")
         (out / "comparisons.json").write_text(json.dumps(comparisons, indent=2))
     torch.save({n: r["per_user_return"] for n, r in results.items()}, out / "per_user_return.pt")
 

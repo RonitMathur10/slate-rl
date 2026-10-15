@@ -12,7 +12,7 @@ The user simulator is learned from **MovieLens-1M**:
 Agents include greedy-click, item-wise DQN, SlateQ and PPO with Wolpertinger-style
 proto-actions.
 
-> Status: work in progress. Milestones 1–5 (data pipeline, retrieval, simulator, environment, baselines + DQN) are done.
+> Status: work in progress. Milestones 1–6 (data pipeline, retrieval, simulator, environment, baselines, DQN, SlateQ) are done.
 
 ## Setup
 
@@ -27,6 +27,7 @@ make validate  # roll reference policies through the simulator -> reports/simula
 make check-env # Gymnasium API check, an example episode, env throughput
 make click-model  # log exploratory slates, fit the agent-side click model
 make dqn       # train DQN (W&B curves; checkpoint selected on training-group users)
+make slateq    # train SlateQ (needs the click model)
 make evaluate  # baselines + agents on held-out users, with paired bootstrap CIs
 make test
 ```
@@ -117,8 +118,8 @@ sessions. `SlateRecEnv` is a single-user Gymnasium wrapper; it passes
   - the user's recent history and their retrieval user embedding
   - K=100 candidates, each with its retrieval embedding, retrieval score, popularity, genres
     and similarity to the user's recent items
-  - the recommender's own session log: progress, click-rate EMA, last click, last watch,
-    no-click streak
+  - the recommender's own logs: progress, click-rate EMA, last click, last watch, no-click
+    streak, and which candidates it has already shown this session
 
   Simulator internals such as fatigue and satisfaction appear only in `info["sim"]`, for
   analysis.
@@ -140,43 +141,60 @@ All policies see only the environment's observation.
 - **Baselines:** `random`, `popularity`, `retrieval` (two-tower order), `greedy_click` and `mmr`.
   - `greedy_click` ranks by the **agent's own click model**: a conditional logit with no-click
     and position bias, fit on 150k logged exploratory slates. It is calibrated (predicted CTR
-    0.396 vs observed 0.388).
+    0.390 vs observed 0.389).
   - `mmr` is greedy-click relevance re-ranked for diversity in embedding space.
 - **DQN (item-wise):**
   - Q(s, A) = mean of per-candidate q(s, i), and the slate is the top-5 by q.
   - Training uses double DQN, 3-step returns, Polyak targets and correct bootstrapping on
     truncation.
-  - The replay buffer stores item ids plus the 2 dynamic features (about 1.3 KB per
-    transition, versus about 34 KB for the full features).
-  - It trains on about 1M environment steps in roughly 10 minutes on an M3.
-  - The checkpoint is chosen on 1,024 *training-group* users. The 604 held-out users are used
-    only for the final numbers below.
+  - The replay buffer stores item ids plus the dynamic features (about 1.3 KB per transition,
+    versus about 34 KB for the full features).
+- **SlateQ** (Ie et al., 2019):
+  - `Q(s, A) = R_slate(s, A) + Σ_{i ∈ A ∪ {none}} P(i | s, A) · Q̄(s, i)`.
+  - The choice model P is the agent's click model. Q̄ is learned by TD on the item the user
+    actually clicked.
+  - `R_slate` covers the slate-level reward terms (diversity, repeat). The agent computes them
+    exactly from its observation; a test checks they match the env's reward.
+  - Slates are built greedily, maximising Q(s, A) position by position.
+- **Training budget:** 1M environment steps per agent, about 10 minutes on an M3. The
+  checkpoint is chosen on 1,024 *training-group* users; the 604 held-out users are used only
+  for the numbers below.
 
 Held-out users, one session each, with the same users and seed for every policy:
 
-| Policy | Return | Session length | Clicks | Watch | CTR | ILD |
-|---|---|---|---|---|---|---|
-| random | 4.92 | 10.5 | 2.66 | 1.87 | 0.253 | 0.692 |
-| popularity | 4.22 | 11.0 | 2.88 | 2.24 | 0.262 | 0.730 |
-| retrieval | 7.98 | 10.7 | 5.14 | 3.55 | 0.480 | 0.575 |
-| greedy_click | 7.57 | 10.1 | 4.87 | 3.36 | 0.483 | 0.577 |
-| mmr | **8.33** | 10.9 | 5.32 | 3.68 | **0.488** | 0.617 |
-| dqn (1 seed) | 8.32 | **11.8** | 5.25 | **3.79** | 0.443 | **0.656** |
+| Policy | Return | Session length | Clicks | Watch | CTR | ILD | Repeat |
+|---|---|---|---|---|---|---|---|
+| random | 4.92 | 10.5 | 2.66 | 1.87 | 0.253 | 0.692 | 0.23 |
+| popularity | 4.22 | 11.0 | 2.88 | 2.24 | 0.262 | 0.730 | 0.84 |
+| retrieval | 7.98 | 10.7 | 5.14 | 3.55 | 0.480 | 0.575 | 0.74 |
+| greedy_click | 7.91 | 10.7 | 5.10 | 3.54 | 0.479 | 0.582 | 0.76 |
+| mmr | 8.23 | 10.9 | 5.26 | 3.65 | **0.483** | 0.622 | 0.75 |
+| dqn (1 seed) | 8.88 | 11.8 | 5.08 | 3.70 | 0.431 | 0.636 | **0.39** |
+| **slateq** (1 seed) | **10.01** | **12.8** | **5.88** | **4.40** | 0.461 | **0.712** | 0.58 |
 
-DQN's return relative to each baseline (paired bootstrap, 95% CI): **+0.76 [+0.30, +1.21]**
-vs greedy_click, +0.34 [−0.11, +0.79] vs retrieval, −0.01 [−0.50, +0.47] vs mmr.
+Paired differences in return (95% bootstrap CI over held-out users):
 
-What DQN does differently from the click-maximiser:
-- It **accepts a lower CTR (0.44 vs 0.48) in exchange for longer sessions and more watch
-  time**. This is the long-term trade-off the simulator was designed to reward, and it beats
-  greedy-click clearly.
-- It does *not* yet beat MMR.
-- It never learned to stop re-showing slates: about 74% of each slate was already shown,
-  the same as the deterministic baselines.
+| | vs retrieval | vs greedy_click | vs mmr | vs dqn |
+|---|---|---|---|---|
+| dqn | +0.90 [+0.40, +1.40] | +0.96 [+0.48, +1.46] | +0.65 [+0.17, +1.14] | – |
+| slateq | +2.03 [+1.46, +2.62] | +2.09 [+1.51, +2.70] | +1.78 [+1.24, +2.35] | +1.13 [+0.56, +1.72] |
 
-The validation curve was still rising at 1M steps
-([learning curves](reports/eval/learning_curves.png)). SlateQ, PPO, longer training and
-multiple seeds come next.
+What the results show:
+- **Both RL agents give up immediate CTR for longer sessions and more watch time**, which is
+  exactly the long-term trade-off the simulator was designed to reward. Over training, SlateQ
+  lowers its CTR (0.46 → 0.44) while its sessions grow from 11.5 to 13 steps
+  ([learning curves](reports/eval/learning_curves.png)).
+- **SlateQ wins by modelling how slate items compete for a single click.** It reaches DQN's
+  final return within about 100k steps.
+- **Its validation return peaked around 400k steps and then drifted down a little**, so
+  checkpoint selection matters.
+- **The agents need to see their own impressions.** An earlier version of the observation
+  hid which candidates had already been shown. With that version DQN never learned to stop
+  repeating slates (repeat share 0.74) and only tied MMR. Exposing the impressions dropped
+  DQN's repeat share to 0.39 and made it beat every baseline.
+
+These are single-seed results. Multi-seed runs and robustness to perturbed simulators come in
+milestone 8.
 
 ![learning curves](reports/eval/learning_curves.png)
 

@@ -83,9 +83,11 @@ def test_repeat_penalty_tracks_shown_items(parts):
     assert (info["reward_components"]["repeat"] == 0).all()
     assert env.shown.gather(1, info["slate"]).all()
     # Nothing was clicked, so the candidates are unchanged and the same slate is re-shown.
-    _, _, _, _, info2 = env.step(first_k_action())
+    obs2, _, _, _, info2 = env.step(first_k_action())
     assert torch.equal(info2["slate"], info["slate"])
     assert (info2["reward_components"]["repeat"] == 1).all()
+    shown_feature = obs2.cand_feats[..., -1].gather(1, first_k_action())
+    assert (shown_feature == 1).all(), "the agent must be able to see its own impressions"
 
 
 def test_truncation_vs_termination_and_autoreset(parts):
