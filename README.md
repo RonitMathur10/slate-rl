@@ -12,7 +12,7 @@ The user simulator is learned from **MovieLens-1M**:
 Agents include greedy-click, item-wise DQN, SlateQ and PPO with Wolpertinger-style
 proto-actions.
 
-> Status: work in progress. Milestone 1 (scaffold and data pipeline) is done.
+> Status: work in progress. Milestones 1–2 (data pipeline, two-tower retrieval) are done.
 
 ## Setup
 
@@ -21,6 +21,7 @@ Requires [uv](https://docs.astral.sh/uv/) and a W&B login (`uvx wandb login`).
 ```bash
 make install   # uv sync + pre-commit hooks
 make data      # download MovieLens-1M, index, split -> data/processed/ml-1m
+make retrieval # train the two-tower model + FAISS index -> artifacts/retrieval/ml-1m
 make test
 ```
 
@@ -38,11 +39,32 @@ Pass `wandb.mode=disabled` to any script to run without W&B logging.
   ratings, and unclicked impressions are sampled negatives. Results describe behaviour inside the
   simulator, not real users.
 
+## Candidate retrieval (two-tower)
+
+Each step, the agent chooses from K=100 candidates proposed by a two-tower model.
+- **User tower:** encodes recent history plus demographics, with **no user-ID embedding**. This
+  lets it work for held-out users and inside simulated sessions.
+- **Item tower:** encodes item ID, genres and release year.
+- **Training:** in-batch sampled softmax with logQ correction and duplicate-target masking.
+- **Search:** exact inner-product search with FAISS.
+
+Results on MovieLens-1M. Recall and NDCG count all of a user's next ratings in the split, with
+already-seen items excluded:
+
+| Model | Split | Recall@10 | Recall@100 | NDCG@10 | NDCG@100 |
+|---|---|---|---|---|---|
+| Popularity | test | 0.038 | 0.218 | 0.064 | 0.116 |
+| Two-tower | test | 0.180 | 0.551 | 0.223 | 0.336 |
+| Two-tower | held-out users, test | 0.182 | 0.545 | 0.219 | 0.330 |
+
+Held-out users perform about as well as training users, so the history-based user tower
+generalises to users it never saw.
+
 ## Layout
 
 ```
 configs/    Hydra configs (data/, wandb/, ...)
-slate_rl/   data/, utils/ (retrieval/, simulator/, envs/, agents/, eval/ coming)
+slate_rl/   data/, retrieval/, utils/ (simulator/, envs/, agents/, eval/ coming)
 scripts/    entry points
 tests/
 ```

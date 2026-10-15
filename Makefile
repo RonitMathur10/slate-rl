@@ -1,4 +1,4 @@
-.PHONY: install lint fmt test data
+.PHONY: install lint fmt test data retrieval
 
 install:
 	uv sync
@@ -17,3 +17,6 @@ test:
 
 data:
 	uv run python scripts/prepare_data.py
+
+retrieval:
+	uv run python scripts/train_retrieval.py

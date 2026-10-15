@@ -1,0 +1,9 @@
+defaults:
+  - data: ml1m
+  - retrieval: two_tower
+  - wandb: default
+  - _self_
+
+seed: 0
+device: auto
+log_artifact: true

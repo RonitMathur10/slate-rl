@@ -1,0 +1,18 @@
+model:
+  emb_dim: 64
+  hidden_dim: 256
+  demo_dim: 16
+  recent_k: 5
+  dropout: 0.1
+train:
+  batch_size: 1024
+  epochs: 20
+  lr: 1.0e-3
+  weight_decay: 0.0
+  temperature: 0.05
+  logq_correction: true
+  eval_ks: [10, 50, 100]
+  select_metric: recall@100
+  patience: 3
+max_hist: 50
+artifact_dir: artifacts/retrieval/${data.name}
