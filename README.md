@@ -12,7 +12,7 @@ The user simulator is learned from **MovieLens-1M**:
 Agents include greedy-click, item-wise DQN, SlateQ and PPO with Wolpertinger-style
 proto-actions.
 
-> Status: work in progress. Milestones 1–3 (data pipeline, two-tower retrieval, user simulator) are done.
+> Status: work in progress. Milestones 1–4 (data pipeline, two-tower retrieval, user simulator, RL environment) are done.
 
 ## Setup
 
@@ -24,6 +24,7 @@ make data      # download MovieLens-1M, index, split -> data/processed/ml-1m
 make retrieval # train the two-tower model + FAISS index -> artifacts/retrieval/ml-1m
 make simulator # train the simulator's choice model -> artifacts/simulator/ml-1m
 make validate  # roll reference policies through the simulator -> reports/simulator/
+make check-env # Gymnasium API check, an example episode, env throughput
 make test
 ```
 
@@ -103,11 +104,38 @@ affinity. The `oracle_*` rows exist only as probes.
 - The rating head is compressed towards the mean (true 1★ → 2.7, 5★ → 3.9).
 - Simulated consumption is slightly more popular and less genre-diverse than real consumption.
 
+## Environment
+
+`BatchedSlateEnv` steps N simulated users in parallel on the GPU and auto-resets finished
+sessions. `SlateRecEnv` is a single-user Gymnasium wrapper; it passes
+`gymnasium.utils.env_checker` and is used for the viewer and serving.
+
+- **Observation:** only what a real recommender could know.
+  - the user's recent history and their retrieval user embedding
+  - K=100 candidates, each with its retrieval embedding, retrieval score, popularity, genres
+    and similarity to the user's recent items
+  - the recommender's own session log: progress, click-rate EMA, last click, last watch,
+    no-click streak
+
+  Simulator internals such as fatigue and satisfaction appear only in `info["sim"]`, for
+  analysis.
+- **Action:** k=5 distinct indices into the candidates. Duplicate indices are replaced by the
+  lowest unused candidate and flagged in `info["action_fixed"]`.
+- **Reward:** `click + watch + 0.1·ILD(slate) + 0.1·novelty(clicked) − 0.2·repeat`.
+  - ILD is genre diversity within the shown slate.
+  - Novelty counts only for *consumed* items, so showing obscure items nobody clicks earns
+    nothing.
+  - `repeat` is the share of the slate already shown earlier in the session.
+  - Each component is reported separately in `info["reward_components"]`.
+- **Episode end:** a user leaving is `terminated`; hitting the 50-step cap is `truncated`.
+  `info["final_obs"]` supports bootstrapping on truncation.
+- **Throughput:** about 22k user-steps/s on an M3 (MPS), and about 9k on CPU.
+
 ## Layout
 
 ```
 configs/    Hydra configs (data/, wandb/, ...)
-slate_rl/   data/, retrieval/, simulator/, agents/, eval/, utils/ (envs/ coming)
+slate_rl/   data/, retrieval/, simulator/, envs/, agents/, eval/, utils/
 reports/    generated validation reports
 scripts/    entry points
 tests/

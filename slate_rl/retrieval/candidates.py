@@ -17,12 +17,21 @@ class CandidateGenerator:
             self.item_emb = model.all_item_embeddings()
 
     @torch.no_grad()
-    def __call__(
-        self, users: torch.Tensor, history: torch.Tensor, seen: torch.Tensor, k: int
+    def user_embedding(self, users: torch.Tensor, history: torch.Tensor) -> torch.Tensor:
+        return self.model.user_embed(history, self.demo[users])
+
+    @torch.no_grad()
+    def topk(
+        self, user_emb: torch.Tensor, seen: torch.Tensor, k: int
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Top-k unseen items by two-tower score -> (item_idx [B, k], scores [B, k])."""
-        scores = self.model.user_embed(history, self.demo[users]) @ self.item_emb.T
+        scores = user_emb @ self.item_emb.T
         scores[:, 0] = float("-inf")
         scores = scores.masked_fill(seen, float("-inf"))
         top = scores.topk(k, dim=1)
         return top.indices, top.values
+
+    def __call__(
+        self, users: torch.Tensor, history: torch.Tensor, seen: torch.Tensor, k: int
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        return self.topk(self.user_embedding(users, history), seen, k)

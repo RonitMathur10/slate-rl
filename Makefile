@@ -1,4 +1,4 @@
-.PHONY: install lint fmt test data retrieval simulator validate
+.PHONY: install lint fmt test data retrieval simulator validate check-env
 
 install:
 	uv sync
@@ -26,3 +26,6 @@ simulator:
 
 validate:
 	uv run python scripts/validate_simulator.py
+
+check-env:
+	uv run python scripts/check_env.py

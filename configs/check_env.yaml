@@ -1,0 +1,11 @@
+defaults:
+  - data: ml1m
+  - retrieval: two_tower
+  - simulator: default
+  - env: default
+  - _self_
+
+seed: 0
+device: auto
+benchmark_sizes: [64, 256, 1024, 4096]
+benchmark_steps: 100

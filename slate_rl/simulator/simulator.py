@@ -71,6 +71,7 @@ class SimResponse:
     p_click: torch.Tensor  # [B] probability of clicking anything on this slate
     fatigue: torch.Tensor  # [B] after the update
     satisfaction: torch.Tensor  # [B] after the update
+    left: torch.Tensor  # [B] bool; user chose to leave (terminal)
     done: torch.Tensor  # [B] bool; user left or hit max_steps
 
 
@@ -214,6 +215,7 @@ class UserSimulator:
             p_click=1.0 - probs[:, -1],
             fatigue=self.fatigue.clone(),
             satisfaction=self.satisfaction.clone(),
+            left=leave,
             done=done,
         )
 

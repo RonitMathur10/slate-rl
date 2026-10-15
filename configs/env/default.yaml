@@ -1,0 +1,11 @@
+num_envs: 256
+n_candidates: 100
+slate_size: 5
+autoreset: true
+# r = click + watch + 0.1 * ILD(slate) + 0.1 * novelty(clicked) - 0.2 * repeat_share(slate)
+reward:
+  click: 1.0
+  watch: 1.0
+  diversity: 0.1
+  novelty: 0.1
+  repeat: 0.2
