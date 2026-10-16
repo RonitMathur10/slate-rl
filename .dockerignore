@@ -1,0 +1,14 @@
+.git
+.venv
+.claude
+**/__pycache__
+.pytest_cache
+.ruff_cache
+wandb
+outputs
+multirun
+logs
+artifacts
+data
+tests
+notebooks

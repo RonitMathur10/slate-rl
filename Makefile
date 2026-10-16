@@ -1,4 +1,4 @@
-.PHONY: install lint fmt test data retrieval simulator validate check-env click-model dqn slateq ppo evaluate seeds evaluate-seeds trajectories
+.PHONY: install lint fmt test data retrieval simulator validate check-env click-model dqn slateq ppo evaluate seeds evaluate-seeds trajectories api viewer up
 
 install:
 	uv sync
@@ -53,3 +53,12 @@ evaluate-seeds:
 
 trajectories:
 	uv run python scripts/export_trajectories.py
+
+api:
+	uv run uvicorn slate_rl.serving.api:app --port 8000
+
+viewer:
+	uv run streamlit run viewer/app.py
+
+up:
+	docker compose up --build

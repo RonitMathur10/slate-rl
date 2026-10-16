@@ -21,6 +21,11 @@ class CandidateGenerator:
         return self.model.user_embed(history, self.demo[users])
 
     @torch.no_grad()
+    def embed(self, history: torch.Tensor, demo: torch.Tensor) -> torch.Tensor:
+        """User embedding from history and explicit demographics (users not in the dataset)."""
+        return self.model.user_embed(history, demo)
+
+    @torch.no_grad()
     def topk(
         self, user_emb: torch.Tensor, seen: torch.Tensor, k: int
     ) -> tuple[torch.Tensor, torch.Tensor]:

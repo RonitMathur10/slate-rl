@@ -12,7 +12,7 @@ The user simulator is learned from **MovieLens-1M**:
 Agents include greedy-click, item-wise DQN, SlateQ and PPO with Wolpertinger-style
 proto-actions.
 
-> Status: work in progress. Milestones 1–8 are done: data pipeline, retrieval, simulator, environment, baselines, DQN, SlateQ, PPO, and multi-seed + robustness evaluation.
+> Status: work in progress. Milestones 1–9 are done: data pipeline, retrieval, simulator, environment, baselines, DQN, SlateQ, PPO, multi-seed + robustness evaluation, and the viewer/API/Docker demo.
 
 ## Setup
 
@@ -266,11 +266,58 @@ The table shows each agent's return gain over greedy-click (mean and 95% CI over
 - Learning curves for seed 0 are in
   [reports/eval/learning_curves.png](reports/eval/learning_curves.png).
 
+## Demo: viewer, API, Docker
+
+```bash
+docker compose up --build   # viewer: http://localhost:8501 · API docs: http://localhost:8000/docs
+```
+
+Without Docker, run `make api` and `make viewer` in two terminals. The viewer reads the
+committed `reports/`, so session replay and results work without any trained artifacts.
+
+**Viewer (Streamlit):**
+- **Session replay:** pick a held-out user and two policies, then step through both
+  sessions side by side.
+  - The clicked movie is highlighted with its watch fraction, and re-shown items are marked.
+  - Charts show cumulative reward plus the simulator's hidden fatigue and satisfaction.
+  - Users are listed by id by default. Sorting by the biggest gap is an explicit option,
+    since extremes include luck in when users leave.
+- **Results:** the multi-seed and robustness figures, plus a table of mean return per
+  scenario.
+- **Live session:** runs a brand-new simulated session through the API.
+
+**API (FastAPI):**
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /policies` | All baselines and trained agents (seed 0) |
+| `POST /recommend` | A slate from any policy, given a viewing history |
+| `POST /simulate` | One simulated session for a held-out user, step by step |
+| `GET /health` | Health check |
+
+`POST /recommend` takes `history_movie_ids` (MovieLens ids) and, optionally, `shown_movie_ids`
+(impressions earlier in the session), `step` and `demographics`. Requests go through the
+same `build_observation` function the agents were trained on.
+
+```bash
+curl -X POST localhost:8000/recommend -H 'content-type: application/json' \
+  -d '{"policy": "slateq", "history_movie_ids": [260, 1196, 1210, 2571, 1240, 589, 1580]}'
+# Star Wars IV-VI, The Matrix, Terminator 1-2, Men in Black ->
+# Total Recall, Back to the Future, Close Encounters, E.T., Jurassic Park
+```
+
+**Images:**
+- The API image installs CPU-only PyTorch (CUDA wheels are filtered out of the lock export).
+  The trained artifacts and processed data are mounted read-only.
+- The viewer image has no PyTorch.
+
 ## Layout
 
 ```
 configs/    Hydra configs (data/, wandb/, ...)
-slate_rl/   data/, retrieval/, simulator/, envs/, agents/, eval/, utils/
+slate_rl/   data/, retrieval/, simulator/, envs/, agents/, eval/, serving/, utils/
+viewer/     Streamlit app
+docker/     API and viewer images (docker-compose.yml at the root)
 reports/    generated validation reports
 scripts/    entry points
 tests/

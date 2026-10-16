@@ -63,6 +63,40 @@ class SlateObs:
         return SlateObs(*(getattr(self, f.name).to(device) for f in fields(self)))
 
 
+@torch.no_grad()
+def build_observation(
+    cand_gen: CandidateGenerator,
+    item_static: torch.Tensor,
+    user_emb: torch.Tensor,
+    history: torch.Tensor,
+    seen: torch.Tensor,
+    shown: torch.Tensor,
+    session: torch.Tensor,
+    n_candidates: int,
+) -> tuple[SlateObs, torch.Tensor]:
+    """The agent's observation for a batch of users; shared by the env and the serving API.
+
+    ``seen`` [N, n_items + 1] excludes consumed items from the candidates; ``shown`` marks
+    items already shown this session. Returns (obs, cosine of each candidate to recent items).
+    """
+    cands, scores = cand_gen.topk(user_emb, seen, n_candidates)
+    item_emb = cand_gen.item_emb
+    recent = history[:, -RECENT_WINDOW:]
+    mask = (recent > 0).float().unsqueeze(-1)
+    recent_vec = F.normalize((item_emb[recent] * mask).sum(1), dim=-1)
+    recent_sim = torch.einsum("bkd,bd->bk", item_emb[cands], recent_vec)
+    cand_feats = torch.cat(
+        [
+            item_static[cands],
+            scores.unsqueeze(-1),
+            recent_sim.unsqueeze(-1),
+            shown.gather(1, cands).float().unsqueeze(-1),  # the recommender's impression log
+        ],
+        dim=-1,
+    )
+    return SlateObs(user_emb, session, history.clone(), cands, cand_feats), recent_sim
+
+
 class BatchedSlateEnv:
     """Per-candidate features are ``[item_static[item], retrieval score, cosine to recent items,
     already shown this session]``.
@@ -154,25 +188,7 @@ class BatchedSlateEnv:
     # ----- observation --------------------------------------------------------------------
     @torch.no_grad()
     def _observe(self) -> SlateObs:
-        history = self.sim.history
-        user_emb = self.cand_gen.user_embedding(self.users, history)
-        cands, scores = self.cand_gen.topk(user_emb, self.sim.seen, self.K)
-        recent = history[:, -RECENT_WINDOW:]
-        mask = (recent > 0).float().unsqueeze(-1)
-        recent_vec = F.normalize((self.item_emb[recent] * mask).sum(1), dim=-1)
-        cand_emb = self.item_emb[cands]
-        recent_sim = torch.einsum("bkd,bd->bk", cand_emb, recent_vec)
-        self._cands, self._recent_sim = cands, recent_sim
-        shown = self.shown.gather(1, cands).float()  # the recommender's own impression log
-        cand_feats = torch.cat(
-            [
-                self.item_static[cands],
-                scores.unsqueeze(-1),
-                recent_sim.unsqueeze(-1),
-                shown.unsqueeze(-1),
-            ],
-            dim=-1,
-        )
+        user_emb = self.cand_gen.user_embedding(self.users, self.sim.history)
         session = torch.stack(
             [
                 self.sim.t.float() / self.max_steps,
@@ -184,7 +200,18 @@ class BatchedSlateEnv:
             ],
             dim=1,
         )
-        return SlateObs(user_emb, session, history.clone(), cands, cand_feats)
+        obs, recent_sim = build_observation(
+            self.cand_gen,
+            self.item_static,
+            user_emb,
+            self.sim.history,
+            self.sim.seen,
+            self.shown,
+            session,
+            self.K,
+        )
+        self._cands, self._recent_sim = obs.cand_items, recent_sim
+        return obs
 
     # ----- step ---------------------------------------------------------------------------
     def _dedupe(self, action: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:

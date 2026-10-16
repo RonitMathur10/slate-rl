@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "viewer",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "streamlit", "run", "viewer/app.py", "--server.port", "8501", "--server.headless", "true"],
+      "port": 8501
+    },
+    {
+      "name": "api",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "uvicorn", "slate_rl.serving.api:app", "--port", "8000"],
+      "port": 8000
+    }
+  ]
+}

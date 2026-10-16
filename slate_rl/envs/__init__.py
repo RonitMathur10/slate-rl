@@ -5,6 +5,7 @@ from slate_rl.envs.batched import (
     EnvConfig,
     RewardConfig,
     SlateObs,
+    build_observation,
 )
 from slate_rl.envs.factory import (
     EnvAssets,
@@ -24,6 +25,7 @@ __all__ = [
     "RewardConfig",
     "SlateObs",
     "SlateRecEnv",
+    "build_observation",
     "load_assets",
     "make_batched_env",
     "make_gym_env",

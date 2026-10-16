@@ -1,0 +1,20 @@
+# docker compose up --build   ->  viewer at http://localhost:8501, API docs at http://localhost:8000/docs
+# Needs the trained artifacts locally (make data retrieval simulator click-model + agents).
+services:
+  api:
+    build: {context: ., dockerfile: docker/api.Dockerfile}
+    ports: ["8000:8000"]
+    environment:
+      SLATE_RL_DEVICE: cpu
+      SLATE_RL_AGENT_SEED: "0"
+    volumes:
+      - ./artifacts:/app/artifacts:ro
+      - ./data/processed:/app/data/processed:ro
+
+  viewer:
+    build: {context: ., dockerfile: docker/viewer.Dockerfile}
+    ports: ["8501:8501"]
+    environment:
+      API_URL: http://api:8000
+    depends_on:
+      api: {condition: service_healthy}
