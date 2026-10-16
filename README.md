@@ -1,211 +1,101 @@
 # slate-rl
 
-Long-horizon **slate recommendation with deep RL**. Each turn, an agent recommends a slate of
-items to a simulated user, and it is trained to maximise engagement over the whole session
-(clicks, watch-through, diversity and novelty) instead of the next click.
+**Long-horizon slate recommendation with deep RL, in a user simulator learned from
+MovieLens-1M.** Each turn an agent shows a simulated user 5 movies, the user clicks one or
+none, and the agent is trained to maximise engagement over the *whole session* instead of
+the next click.
 
-The user simulator is learned from **MovieLens-1M**:
-- a sequence encoder of the user's history
-- a conditional-logit choice model that includes a no-click option
-- latent fatigue and satisfaction states that decide when the user leaves the session
+![RL agents vs baselines across 5 training seeds](reports/eval_seeds/nominal_returns.png)
 
-Agents include greedy-click, item-wise DQN, SlateQ and PPO with Wolpertinger-style
-proto-actions.
+**Key results** (604 held-out users, 5 training seeds per agent):
+- **SlateQ wins:** return **10.14 [9.79, 10.50]** vs **8.45** for a greedy click-maximiser
+  (+20%). It accepts a slightly lower CTR in exchange for sessions **18% longer** with **18%
+  more watch time**, and it stays ahead in **all 8** robustness scenarios, including a
+  simulator retrained from a different seed.
+- **PPO's action space decides whether it works:**
+  - Wolpertinger-style proto-actions fail when naively initialised (below random).
+  - Anchored at the user embedding, they only match retrieval.
+  - A Plackett-Luce policy over the candidates reaches 9.32.
+- **DQN only ties the baselines across seeds.** A single seed had suggested a clear win, and
+  the README reports the correction.
 
-> Status: work in progress. Milestones 1–9 are done: data pipeline, retrieval, simulator, environment, baselines, DQN, SlateQ, PPO, multi-seed + robustness evaluation, and the viewer/API/Docker demo.
+![Session replay: SlateQ vs greedy-click for a typical held-out user](reports/demo/viewer_replay.gif)
 
-## Setup
+*The viewer replaying a typical held-out user: their SlateQ-vs-greedy-click gap is the median
+across 100 users. Greedy-click keeps re-showing the same titles, its hidden fatigue climbs,
+and the user leaves after 7 steps. SlateQ diversifies and keeps the user for 14 steps.*
 
-Requires [uv](https://docs.astral.sh/uv/) and a W&B login (`uvx wandb login`).
+---
 
-```bash
-make install   # uv sync + pre-commit hooks
-make data      # download MovieLens-1M, index, split -> data/processed/ml-1m
-make retrieval # train the two-tower model + FAISS index -> artifacts/retrieval/ml-1m
-make simulator # train the simulator's choice model -> artifacts/simulator/ml-1m
-make validate  # roll reference policies through the simulator -> reports/simulator/
-make check-env # Gymnasium API check, an example episode, env throughput
-make click-model  # log exploratory slates, fit the agent-side click model
-make dqn       # train DQN (W&B curves; checkpoint selected on training-group users)
-make slateq    # train SlateQ (needs the click model)
-make ppo       # train PPO with proto-actions (also: agent=ppo_pl, agent=ppo_naive)
-make evaluate  # baselines + agents on held-out users, with paired bootstrap CIs
-make seeds     # GPU recommended: train 5 seeds of every agent, 6 at a time
-make evaluate-seeds  # multi-seed + robustness report -> reports/eval_seeds/
-make trajectories    # export sessions for the viewer -> reports/trajectories/
-make test
+- [How it works](#how-it-works)
+- [Results](#results)
+- [Try it](#try-it)
+- [Reproduce everything](#reproduce-everything)
+- [Design decisions](#design-decisions)
+- [Components in detail](#components-in-detail)
+- [Limitations](#limitations)
+- [Project layout](#project-layout) · [References](#references)
+
+## How it works
+
+```mermaid
+flowchart LR
+    ML[(MovieLens-1M<br/>ratings)] --> TT[Two-tower retrieval<br/>+ FAISS]
+    ML --> SIM[User simulator<br/>SASRec choice model<br/>+ fatigue, satisfaction, leaving]
+    TT -->|100 candidates per step| ENV[Batched Gymnasium env<br/>N users on GPU]
+    SIM <-->|slate → click, watch, leave| ENV
+    ENV -->|observation, reward| AG[Agents<br/>DQN · SlateQ · PPO]
+    AG -->|5-item slate| ENV
+    ENV --> EV[Multi-seed evaluation<br/>+ robustness suite]
+    AG --> API[FastAPI service]
+    EV --> VIEW[Streamlit viewer]
+    API --> VIEW
 ```
 
-Pass `wandb.mode=disabled` to any script to run without W&B logging.
+1. **Retrieval:** a two-tower model narrows 3,706 movies to 100 candidates per step.
+2. **Simulator:** each simulated user combines learned preferences with hand-set session
+   dynamics.
+   - The preferences come from a SASRec-style transformer trained on MovieLens, which is a
+     conditional-logit choice model.
+   - The dynamics: a no-click option, position bias, **fatigue** that rises when the user
+     consumes similar items, **satisfaction**, and a probability of leaving.
+3. **Environment:** thousands of users are stepped in parallel on the GPU, at about 22k
+   user-steps/s on an M3.
+   - The reward is `click + watch + 0.1·diversity + 0.1·novelty − 0.2·repeat`.
+4. **Agents:** five baselines, item-wise DQN, SlateQ and three PPO variants. They see only
+   what a real recommender could know, never the simulator's internals.
+5. **Evaluation:** paired comparisons on held-out users, 5 seeds, and 8 perturbed simulators.
+6. **Demo:** a viewer that replays sessions side by side, and an API that serves any policy.
 
-## Data
+## Results
 
-- **Chronological per-user split:** the last 10% of each user's ratings is test, the 10% before
-  that is validation, and the rest is train.
-- **Held-out users:** 10% of users are kept out entirely. They are used only for the final RL
-  evaluation.
-- **No popularity leakage:** item popularity is computed from model-group training data only.
-- **Index 0 is padding:** real items are indexed from 1.
-- **Modelling caveat:** MovieLens has no impressions or watch time. Watch-through is modelled from
-  ratings, and unclicked impressions are sampled negatives. Results describe behaviour inside the
-  simulator, not real users.
+### Held-out users, 5 training seeds
 
-## Candidate retrieval (two-tower)
-
-Each step, the agent chooses from K=100 candidates proposed by a two-tower model.
-- **User tower:** encodes recent history plus demographics, with **no user-ID embedding**. This
-  lets it work for held-out users and inside simulated sessions.
-- **Item tower:** encodes item ID, genres and release year.
-- **Training:** in-batch sampled softmax with logQ correction and duplicate-target masking.
-- **Search:** exact inner-product search with FAISS.
-
-Results on MovieLens-1M. Recall and NDCG count all of a user's next ratings in the split, with
-already-seen items excluded:
-
-| Model | Split | Recall@10 | Recall@100 | NDCG@10 | NDCG@100 |
-|---|---|---|---|---|---|
-| Popularity | test | 0.038 | 0.218 | 0.064 | 0.116 |
-| Two-tower | test | 0.180 | 0.551 | 0.223 | 0.336 |
-| Two-tower | held-out users, test | 0.182 | 0.545 | 0.219 | 0.330 |
-
-Held-out users perform about as well as training users, so the history-based user tower
-generalises to users it never saw.
-
-## User simulator
-
-Each simulated user has two parts:
-- **Learned preferences:** a SASRec-style transformer reads the user's history. It is trained on
-  MovieLens with a full-catalogue softmax (a conditional-logit choice model) plus a rating head.
-- **Hand-set session dynamics:** a choice among the slate's items plus a *no-click* option,
-  position bias, a **fatigue** state, a **satisfaction** state and a probability of leaving.
-  - Fatigue rises when the user consumes items similar to what they just watched.
-  - Satisfaction is a moving average of watch-through.
-  - The leave probability goes up with fatigue and down with satisfaction.
-
-Some design choices:
-- **Comparable utilities:** utilities are expressed as *log-lift over uniform*,
-  `log P(i) + log N`. Because a conditional logit has the IIA property, restricting choice to
-  the slate stays consistent with the model fit on the whole catalogue.
-- **Calibrated fatigue reference:** the similarity level at which fatigue neither rises nor falls
-  is set from real data (the mean similarity between consecutive real consumptions).
-- **Separate models:** the simulator has its own embeddings, separate from the retrieval model the
-  agent uses.
-
-The full report is in [reports/simulator/report.md](reports/simulator/report.md). Results on
-held-out users:
-
-| Policy | Session length | Watch / session | CTR at step 0 |
-|---|---|---|---|
-| Random (from candidates) | 10.4 | 1.88 | 0.27 |
-| Retrieval greedy | 10.8 | 3.52 | 0.61 |
-| Oracle greedy (simulator affinity) | 11.6 | 4.70 | **0.73** |
-| Oracle novelty-aware | **13.6** | **5.73** | 0.72 |
-
-Greedy wins on immediate CTR but loses on session length (−15%) and total watch (−18%) to a
-policy that steers away from what the user just consumed. This is the long-term trade-off
-the RL agents have to discover, and they must do it *without* access to the simulator's
-affinity. The `oracle_*` rows exist only as probes.
-
-**Limitations:**
-- No impressions or watch time: everything except the learned affinity and rating model is
-  hand-set.
-- The rating head is compressed towards the mean (true 1★ → 2.7, 5★ → 3.9).
-- Simulated consumption is slightly more popular and less genre-diverse than real consumption.
-
-## Environment
-
-`BatchedSlateEnv` steps N simulated users in parallel on the GPU and auto-resets finished
-sessions. `SlateRecEnv` is a single-user Gymnasium wrapper; it passes
-`gymnasium.utils.env_checker` and is used for the viewer and serving.
-
-- **Observation:** only what a real recommender could know.
-  - the user's recent history and their retrieval user embedding
-  - K=100 candidates, each with its retrieval embedding, retrieval score, popularity, genres
-    and similarity to the user's recent items
-  - the recommender's own logs: progress, click-rate EMA, last click, last watch, no-click
-    streak, and which candidates it has already shown this session
-
-  Simulator internals such as fatigue and satisfaction appear only in `info["sim"]`, for
-  analysis.
-- **Action:** k=5 distinct indices into the candidates. Duplicate indices are replaced by the
-  lowest unused candidate and flagged in `info["action_fixed"]`.
-- **Reward:** `click + watch + 0.1·ILD(slate) + 0.1·novelty(clicked) − 0.2·repeat`.
-  - ILD is genre diversity within the shown slate.
-  - Novelty counts only for *consumed* items, so showing obscure items nobody clicks earns
-    nothing.
-  - `repeat` is the share of the slate already shown earlier in the session.
-  - Each component is reported separately in `info["reward_components"]`.
-- **Episode end:** a user leaving is `terminated`; hitting the 50-step cap is `truncated`.
-  `info["final_obs"]` supports bootstrapping on truncation.
-- **Throughput:** about 22k user-steps/s on an M3 (MPS), and about 9k on CPU.
-
-## Agents and results
-
-All policies see only the environment's observation.
-- **Baselines:** `random`, `popularity`, `retrieval` (two-tower order), `greedy_click` and `mmr`.
-  - `greedy_click` ranks by the **agent's own click model**: a conditional logit with no-click
-    and position bias, fit on 150k logged exploratory slates. It is calibrated (predicted CTR
-    0.390 vs observed 0.389).
-  - `mmr` is greedy-click relevance re-ranked for diversity in embedding space.
-- **DQN (item-wise):**
-  - Q(s, A) = mean of per-candidate q(s, i), and the slate is the top-5 by q.
-  - Training uses double DQN, 3-step returns, Polyak targets and correct bootstrapping on
-    truncation.
-  - The replay buffer stores item ids plus the dynamic features (about 1.3 KB per transition,
-    versus about 34 KB for the full features).
-- **SlateQ** (Ie et al., 2019):
-  - `Q(s, A) = R_slate(s, A) + Σ_{i ∈ A ∪ {none}} P(i | s, A) · Q̄(s, i)`.
-  - The choice model P is the agent's click model. Q̄ is learned by TD on the item the user
-    actually clicked.
-  - `R_slate` covers the slate-level reward terms (diversity, repeat). The agent computes them
-    exactly from its observation; a test checks they match the env's reward.
-  - Slates are built greedily, maximising Q(s, A) position by position.
-- **PPO**, in three variants that share one PPO loop (clipped objective, GAE, LR annealing,
-  value bootstrapping at truncation):
-  - `ppo`, Wolpertinger-style proto-actions:
-    - The actor outputs 5 points in the retrieval embedding space, sampled from a diagonal
-      Gaussian. Each is mapped to its nearest unused candidate, so the policy never scores
-      individual items.
-    - The means are anchored at the user's retrieval embedding plus a residual that starts at
-      zero, so the untrained policy *is* retrieval ranking.
-    - Wolpertinger's re-scoring of the m nearest neighbours needs a Q(s, a) critic, so it is
-      not used with PPO.
-  - `ppo_naive`: the same, but with randomly initialised means and larger exploration noise.
-  - `ppo_pl`, the control: a Plackett-Luce policy that scores each candidate and samples a
-    ranked slate with exact log-probabilities (Gumbel top-k).
-- **Training budget:** 1M environment steps per agent, about 10 minutes on an M3. The
-  checkpoint is chosen on 1,024 *training-group* users; the 604 held-out users are used only
-  for the numbers below.
-
-### Results: 5 training seeds, 604 held-out users
-
-Every policy is evaluated on the same held-out users with the same evaluation seed. For the
-RL agents, the intervals are 95% t-intervals across 5 training seeds. The baselines are
-deterministic and are evaluated once. The full report is in
+Every policy is evaluated on the same 604 held-out users with the same evaluation seed. For
+the agents, intervals are 95% t-intervals across 5 training seeds. The full report is in
 [reports/eval_seeds/report.md](reports/eval_seeds/report.md).
 
-| Policy | Return | Session length | Watch | CTR | ILD | Repeat |
+| Policy | Return | Session length | Watch | CTR | Diversity (ILD) | Repeat share |
 |---|---|---|---|---|---|---|
 | **SlateQ** | **10.14** [9.79, 10.50] | **13.13** | **4.41** | 0.447 | **0.726** | 0.526 |
 | PPO (Plackett-Luce) | 9.32 [9.01, 9.63] | 11.74 | 3.97 | 0.478 | 0.629 | 0.544 |
 | DQN | 8.74 [8.41, 9.06] | 11.86 | 3.62 | 0.422 | 0.647 | **0.383** |
-| MMR | 8.51 | 11.20 | 3.78 | 0.486 | 0.619 | 0.750 |
+| MMR (diversified greedy) | 8.51 | 11.20 | 3.78 | 0.486 | 0.619 | 0.750 |
 | greedy-click | 8.45 | 11.09 | 3.75 | **0.491** | 0.585 | 0.753 |
-| retrieval | 8.37 | 11.12 | 3.67 | 0.487 | 0.579 | 0.741 |
+| retrieval ranking | 8.37 | 11.12 | 3.67 | 0.487 | 0.579 | 0.741 |
 | PPO (proto-actions) | 8.36 [8.22, 8.50] | 11.10 | 3.66 | 0.485 | 0.592 | 0.732 |
 | random | 4.89 | 10.68 | 1.85 | 0.250 | 0.683 | 0.234 |
 | popularity | 4.05 | 10.90 | 2.16 | 0.255 | 0.738 | 0.838 |
 
-![returns across seeds](reports/eval_seeds/nominal_returns.png)
-
 ### Robustness to a changed simulator
 
-Agents are trained on the nominal simulator and then evaluated, unchanged, against:
-- fatigue that is half or 1.5× as strong
+Agents are trained on the nominal simulator and evaluated, unchanged, against seven
+perturbed versions:
+- fatigue ×0.5 or ×1.5
 - users who click more easily, or are pickier
-- users who are more patient, or less patient (they leave later or sooner)
-- **a second simulator**: the same dynamics, but preferences learned by a choice model
-  retrained from a different seed
+- users who are more or less patient
+- **a second simulator**, whose preferences come from a choice model retrained from a
+  different seed
 
 The table shows each agent's return gain over greedy-click (mean and 95% CI over 5 seeds):
 
@@ -224,80 +114,52 @@ The table shows each agent's return gain over greedy-click (mean and 95% CI over
 
 ### What the results show
 
-- **SlateQ is the best policy, and the lead is robust.**
-  - It beats every baseline and every other agent on the nominal simulator, and it beats
-    greedy-click in all 8 scenarios.
-  - It wins by modelling how the items in a slate compete for a single click. It accepts a
-    lower CTR (0.45 vs 0.49) in exchange for sessions that are 18% longer and 18% more watch
-    time, which is the long-term trade-off the simulator was built to reward.
-  - Its advantage *grows* when that trade-off is stronger: easier clicks, patient users, or
-    stronger fatigue.
-- **PPO with a Plackett-Luce policy is a solid second.** It is positive in all 8 scenarios
-  and is the most robust when fatigue is weak or users are picky.
-- **DQN only ties the baselines across seeds** (+0.28 [−0.04, +0.61] vs greedy-click).
-  - A single-seed run in milestone 6 had suggested a significant win. Five seeds show that
-    was partly luck, which is exactly why multi-seed evaluation matters.
-  - DQN also *loses* to greedy-click when fatigue is halved (−0.88). It seems to over-learn
-    "avoid similar items" in a world where that matters less.
+- **SlateQ learns the long-term trade-off, and its lead is robust.**
+  - It models how the 5 items in a slate compete for one click, using the agent's own
+    learned choice model.
+  - Its advantage grows exactly where the trade-off matters more: easier clicks, patient
+    users, stronger fatigue.
+  - Over training it deliberately lowers its CTR (0.46 → 0.44) while sessions lengthen
+    ([learning curves](reports/eval/learning_curves.png)).
 - **How PPO's action space is parameterised decides whether it works.**
-  - *Naive* proto-actions fail outright (3.74, below random). With random initialisation
-    and noise about 3× a coordinate of the 64-d unit embeddings, the nearest-neighbour map
-    produces near-random slates and the gradient carries no signal.
-  - Anchoring the proto-actions at the user embedding makes the policy start as retrieval
-    ranking, but over 5 seeds it never moves away from it (8.36 vs retrieval 8.37).
-  - Scoring the 100 candidates directly (Plackett-Luce) works far better.
-  - Proto-actions are meant for catalogues too large to score item by item; with K=100 they
-    pay only the cost.
-- **The agents need to see their own impressions.** An earlier version of the observation
-  hid which candidates had already been shown. With it, DQN re-showed about 74% of each
-  slate, like the fixed baselines. With the impression feature, its repeat share is 0.38.
-- **Evaluation noise is real.** The same baselines scored about 0.4 lower in milestones 5–7,
-  which were evaluated on the Mac (MPS) instead of a CUDA GPU. Different random-number
-  streams mean different simulated users' choices. This is why every number above comes
-  from one paired evaluation run.
+  - Naive proto-actions fail (3.74, below random). Random initialisation plus exploration
+    noise about 3× a coordinate of the 64-d unit embeddings makes the nearest-neighbour map
+    pick near-random slates.
+  - Anchoring the proto-actions at the user's embedding starts the policy as retrieval
+    ranking, but it never moves away from there.
+  - Scoring the 100 candidates directly (Plackett-Luce) learns steadily.
+  - Proto-actions are designed for catalogues too large to score item by item. With 100
+    candidates they pay only the cost.
+- **Multi-seed evaluation changed a conclusion.**
+  - A single DQN seed beat every baseline significantly; across 5 seeds it only ties them.
+  - DQN even *loses* to greedy-click when fatigue is halved. It seems to over-learn "avoid
+    similar items" in a world where that matters less.
+- **Agents need to see their own impressions.** An early observation omitted which
+  candidates had already been shown, so the repeat penalty depended on information the
+  agents could not see. DQN kept re-showing about 74% of each slate. Exposing the
+  impression log cut that to 38%.
 
-**Compute:**
-- Milestones 1–7 ran on an M3 MacBook Air.
-- Milestone 8 (16 more training runs, a second simulator, 8 robustness scenarios) ran on a
-  rented RTX 3090 in about 30 minutes of compute (six runs at a time), within roughly an
-  hour of pod time including setup.
-- The full pipeline can be rerun on a GPU machine with:
-  `bash scripts/remote/setup.sh && bash scripts/remote/milestone8.sh`.
-- Learning curves for seed 0 are in
-  [reports/eval/learning_curves.png](reports/eval/learning_curves.png).
+## Try it
 
-## Demo: viewer, API, Docker
+**The viewer needs no training**, because the replay and results data are committed:
 
 ```bash
-docker compose up --build   # viewer: http://localhost:8501 · API docs: http://localhost:8000/docs
+uv sync
+uv run streamlit run viewer/app.py      # http://localhost:8501
 ```
 
-Without Docker, run `make api` and `make viewer` in two terminals. The viewer reads the
-committed `reports/`, so session replay and results work without any trained artifacts.
+**The full demo** (viewer + API in Docker) needs trained artifacts; see
+[Reproduce everything](#reproduce-everything):
 
-**Viewer (Streamlit):**
-- **Session replay:** pick a held-out user and two policies, then step through both
-  sessions side by side.
-  - The clicked movie is highlighted with its watch fraction, and re-shown items are marked.
-  - Charts show cumulative reward plus the simulator's hidden fatigue and satisfaction.
-  - Users are listed by id by default. Sorting by the biggest gap is an explicit option,
-    since extremes include luck in when users leave.
-- **Results:** the multi-seed and robustness figures, plus a table of mean return per
-  scenario.
-- **Live session:** runs a brand-new simulated session through the API.
-
-**API (FastAPI):**
+```bash
+docker compose up --build               # viewer :8501 · API docs :8000/docs
+```
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /policies` | All baselines and trained agents (seed 0) |
-| `POST /recommend` | A slate from any policy, given a viewing history |
-| `POST /simulate` | One simulated session for a held-out user, step by step |
-| `GET /health` | Health check |
-
-`POST /recommend` takes `history_movie_ids` (MovieLens ids) and, optionally, `shown_movie_ids`
-(impressions earlier in the session), `step` and `demographics`. Requests go through the
-same `build_observation` function the agents were trained on.
+| `POST /recommend` | A slate from any policy, given a viewing history (MovieLens ids) |
+| `POST /simulate` | A full simulated session for a held-out user, step by step |
+| `GET /policies` · `GET /health` | List the policies · health check |
 
 ```bash
 curl -X POST localhost:8000/recommend -H 'content-type: application/json' \
@@ -306,19 +168,199 @@ curl -X POST localhost:8000/recommend -H 'content-type: application/json' \
 # Total Recall, Back to the Future, Close Encounters, E.T., Jurassic Park
 ```
 
-**Images:**
-- The API image installs CPU-only PyTorch (CUDA wheels are filtered out of the lock export).
-  The trained artifacts and processed data are mounted read-only.
-- The viewer image has no PyTorch.
+## Reproduce everything
 
-## Layout
+Requires [uv](https://docs.astral.sh/uv/). W&B logging is on by default; log in with
+`uvx wandb login`, or add `wandb.mode=disabled` to any script.
+
+```bash
+make install       # dependencies + pre-commit hooks
+make data          # download MovieLens-1M, split, index        (~1 min)
+make retrieval     # two-tower model + FAISS index              (~4 min on an M3)
+make simulator     # simulator choice model                     (~30 min)
+make validate      # simulator validation report
+make click-model   # the agents' own click model, from logged exploration
+make dqn slateq ppo                # one seed each              (~10 min each)
+make evaluate      # held-out evaluation with paired bootstrap CIs
+make test          # 79 tests
+```
+
+For the multi-seed and robustness results, a GPU is recommended. On a rented RTX 3090 they
+took about 30 minutes:
+
+```bash
+bash scripts/remote/setup.sh && PARALLEL=6 bash scripts/remote/milestone8.sh
+```
+
+That script trains 5 seeds of every agent (resumable), trains a second simulator, runs the 8
+robustness scenarios, and exports the viewer's sessions. To rebuild the report and figures
+from saved results without a GPU, run `uv run python scripts/evaluate_seeds.py plot_only=true`.
+
+## Design decisions
+
+**Simulator**
+- **Comparable utilities.** Choice utilities are log-lift over uniform, `log P(i) + log N`.
+  Raw catalogue logits carry an arbitrary per-user offset, which would make a fixed no-click
+  option and fatigue penalty meaningless.
+- **Choosing within a slate stays consistent with training.** A conditional logit has the
+  IIA property, so restricting the full-catalogue choice model to a slate plus no-click is
+  consistent with how it was fit.
+- **Fatigue calibrated from real data.** Fatigue's neutral point is the mean similarity
+  between consecutive real consumptions, so a typical real sequence leaves fatigue flat.
+- **Unlearnable dynamics are stated, not hidden.** MovieLens has no impressions or watch
+  time, so the no-click, position, fatigue and leave parameters are hand-set. They were
+  tuned so that a fatigue-unaware greedy policy loses to a novelty-aware one; see the
+  [simulator report](reports/simulator/report.md).
+
+**Keeping agents honest**
+- **The agent cannot exploit the simulator.** The simulator has its own embeddings and a
+  different seed from the agent's retrieval model. Agents never see fatigue, satisfaction or
+  the simulator's scores.
+- **The agents' click model is their own**, fit on 150k logged exploratory slates.
+- **No user-ID embeddings.** The retrieval user tower reads only history and demographics,
+  so it generalises to held-out users (Recall@100 0.545 vs 0.551 for training users) and to
+  simulated sessions.
+- **Clean evaluation.** Checkpoints are chosen on training-group users. The held-out users
+  are used only for final numbers, with paired comparisons: same users, same seed.
+
+**Engineering**
+- **Compact replay.** 83 of each candidate's 86 features depend only on the item. Storing
+  item ids plus the 3 dynamic features cuts replay memory about 30×.
+- **One observation function.** The environment and the API build observations with the
+  same `build_observation`, so served inputs cannot drift from training.
+- **Correct episode endings.** A user leaving is `terminated`; the 50-step cap is
+  `truncated` and is bootstrapped through `final_obs`, in n-step DQN/SlateQ and in PPO's GAE.
+
+## Components in detail
+
+<details>
+<summary><b>Data</b></summary>
+
+- **Split:** per user and chronological, 80/10/10 train/validation/test. 10% of users are
+  held out entirely for the final RL evaluation.
+- **No popularity leakage:** item popularity is counted on training-group training data only.
+- **Index 0 is padding;** real items are indexed from 1.
+</details>
+
+<details>
+<summary><b>Candidate retrieval (two-tower)</b></summary>
+
+- **User tower:** recent history (mean and recent-mean of item inputs) plus demographics.
+- **Item tower:** item ID, genres and release year.
+- **Training:** in-batch sampled softmax with logQ correction and duplicate-target masking.
+- **Search:** exact inner-product search with FAISS for single requests. Inside the batched
+  env, an on-device matmul is used instead.
+
+| Model | Split | Recall@10 | Recall@100 | NDCG@10 |
+|---|---|---|---|---|
+| Popularity | test | 0.038 | 0.218 | 0.064 |
+| Two-tower | test | 0.180 | 0.551 | 0.223 |
+| Two-tower | held-out users | 0.182 | 0.545 | 0.219 |
+</details>
+
+<details>
+<summary><b>User simulator</b></summary>
+
+- **Learned part:** a 2-layer SASRec transformer with a full-catalogue softmax plus a rating
+  head. On held-out users: next-item NLL 5.56 vs 7.70 for popularity, HR@10 0.29, and
+  rating RMSE 0.970 vs 1.145 for the global mean.
+- **Dynamics:**
+  - logit = `affinity − position_decay·rank − fatigue_weight·fatigue·similarity_to_recent`,
+    with a no-click bias as the alternative
+  - watch fraction comes from the predicted rating
+  - fatigue is updated from the similarity of each clicked item to recent ones
+  - satisfaction is a moving average of watch
+  - leave probability = `σ(a − b·satisfaction + c·fatigue)`
+- **Validation:** 6 sanity checks, real-vs-simulated genre distributions (JS divergence
+  0.004 bits), and rating calibration; see [reports/simulator/](reports/simulator/report.md).
+</details>
+
+<details>
+<summary><b>Environment</b></summary>
+
+- **`BatchedSlateEnv`:** torch-vectorised with auto-reset.
+- **`SlateRecEnv`:** a single-user Gymnasium wrapper that passes
+  `gymnasium.utils.env_checker`.
+- **Observation:**
+  - the retrieval user embedding
+  - session features: progress, click-rate EMA, last click, last watch, no-click streak,
+    last-item similarity
+  - 100 candidates, each with its item features, retrieval score, similarity to recent items,
+    and whether it was already shown this session
+- **Action:** 5 distinct candidate indices. Duplicates are fixed and flagged.
+- **Reward:** each component is reported separately in `info["reward_components"]`.
+</details>
+
+<details>
+<summary><b>Agents</b></summary>
+
+- **Baselines:** random, popularity, retrieval ranking, greedy-click (on the agents' click
+  model) and MMR.
+- **DQN:** Q(s, A) = mean of per-candidate q(s, i), with double DQN, 3-step returns and
+  Polyak targets.
+- **SlateQ:** `Q(s, A) = R_slate(s, A) + Σ_{i ∈ A ∪ {none}} P(i | s, A) · Q̄(s, i)`.
+  - Q̄ is learned by TD on the item actually clicked.
+  - `R_slate` (diversity and repeat) is computed exactly from the observation.
+  - Slates are built greedily, position by position.
+- **PPO:** one loop (clipped objective, GAE, LR annealing) with three action heads:
+  - proto-actions anchored at the user embedding
+  - naive proto-actions
+  - Plackett-Luce with exact log-probabilities via Gumbel top-k
+- **Budget:** 1M environment steps per agent per seed.
+</details>
+
+## Limitations
+
+- **Simulator, not real users.**
+  - Everything except the learned preferences and ratings is hand-set, and the results
+    describe behaviour inside this simulator.
+  - The agents' advantage depends on the fatigue mechanism the simulator was designed to
+    have. The robustness suite varies its strength but not its form.
+- **Weak watch-time signal.** The rating head is compressed towards the mean (true 1★ → 2.7,
+  5★ → 3.9), so watch-through varies less between good and bad items than it would in
+  reality.
+- **Narrower simulated taste.** Simulated users consume slightly more popular and less
+  genre-diverse items than real users.
+- **The average gain is concentrated.**
+  - On the 100 exported sessions, SlateQ beats greedy-click for 59% of users. The median
+    per-user gain is +0.23, against a mean of +1.13.
+  - Most of SlateQ's advantage comes from keeping a minority of users engaged much longer.
+  - Each user is one stochastic session, so per-user gaps include luck.
+- **One fixed click model.** All seeds of SlateQ and the greedy-click baseline share it, so
+  the seed intervals do not include click-model variance.
+- **Evaluation noise between devices.** Baseline scores differ by about 0.4 between the Mac
+  and a CUDA GPU, because the random-number streams differ. All comparisons in the tables
+  come from one paired run.
+- **Small catalogue.** MovieLens-1M has 3,706 items. Proto-actions and FAISS would matter
+  more at scale; MovieLens-32M is the natural next step.
+
+## Project layout
 
 ```
-configs/    Hydra configs (data/, wandb/, ...)
-slate_rl/   data/, retrieval/, simulator/, envs/, agents/, eval/, serving/, utils/
+configs/    Hydra configs: data, retrieval, simulator, env, agents, evaluation
+slate_rl/   data/  retrieval/  simulator/  envs/  agents/  eval/  serving/  utils/
+scripts/    training, evaluation and export entry points; remote/ for GPU machines
 viewer/     Streamlit app
 docker/     API and viewer images (docker-compose.yml at the root)
-reports/    generated validation reports
-scripts/    entry points
-tests/
+reports/    generated reports, figures, the demo GIF and exported sessions
+tests/      79 tests (pytest)
 ```
+
+Stack: PyTorch, Gymnasium, FAISS, Hydra, polars, Weights & Biases, FastAPI, Streamlit,
+Docker, uv, ruff.
+
+## References
+
+- Ie et al., 2019. *SlateQ: A Tractable Decomposition for Reinforcement Learning with
+  Recommendation Sets.* IJCAI.
+- Dulac-Arnold et al., 2015. *Deep Reinforcement Learning in Large Discrete Action Spaces*
+  (Wolpertinger).
+- Kang & McAuley, 2018. *Self-Attentive Sequential Recommendation* (SASRec).
+- Yi et al., 2019. *Sampling-Bias-Corrected Neural Modeling for Large Corpus Item
+  Recommendations* (two-tower, logQ correction).
+- Schulman et al., 2017. *Proximal Policy Optimization Algorithms.*
+- Ie et al., 2019. *RecSim: A Configurable Simulation Platform for Recommender Systems.*
+- Harper & Konstan, 2015. *The MovieLens Datasets: History and Context.*
+
+MovieLens data is downloaded from GroupLens by `make data` and is not redistributed here;
+see the [GroupLens terms](https://grouplens.org/datasets/movielens/).
